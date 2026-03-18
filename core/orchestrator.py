@@ -32,17 +32,19 @@ class Orchestrator:
     # 输入解析
     # ──────────────────────────────────────────────────────────────────────
 
-    def parse_user_input(self, messages: list[dict]) -> tuple[list[str], str | None]:
+    def parse_user_input(self, messages: list[dict]) -> tuple[list[str], str | None, str | None]:
         """
         从对话消息中解析出：
-        - keys: 需要提取的要素清单
-        - file_url: PDF 文件的 URL（或 None）
+        - keys:    需要提取的要素清单
+        - file_url: HTTP(S) URL（或 None）
+        - file_id:  已上传文件的 ID，格式 [file_id:xxx]（或 None）
 
         支持格式：
           1. 编号列表："1. 项目名称\n2. 投标总价"
           2. 符号列表："- 项目名称\n- 投标总价"
           3. JSON 数组：'["项目名称","投标总价"]'
           4. 混合 + URL："请分析 https://xxx/a.pdf\n提取: 1.项目名称 2.投标总价"
+          5. 混合 + file_id："[file_id:abc123]\n1. 投标总价"
         """
         # 合并所有用户消息
         text = " ".join(
@@ -51,15 +53,22 @@ class Orchestrator:
             if m.get("role") == "user"
         )
 
-        # 提取 URL
+        # 提取 file_id 引用
+        fid_match = re.search(r"\[file_id:([^\]]+)\]", text)
+        file_id = fid_match.group(1).strip() if fid_match else None
+
+        # 提取 HTTP URL
         url_match = re.search(r"https?://\S+\.pdf\S*", text, re.IGNORECASE)
         file_url = url_match.group(0).rstrip("。，,.") if url_match else None
 
         # 提取要素清单
         keys: list[str] = []
 
-        # JSON 数组
-        json_match = re.search(r"\[([^\]]+)\]", text)
+        # 把 [file_id:xxx] 从文本中去掉，避免干扰 key 提取
+        clean_text = re.sub(r"\[file_id:[^\]]+\]", "", text).strip()
+
+        # JSON 数组（排除 file_id 格式）
+        json_match = re.search(r"\[([^\]]+)\]", clean_text)
         if json_match:
             try:
                 keys = json.loads(f"[{json_match.group(1)}]")
@@ -68,18 +77,17 @@ class Orchestrator:
 
         # 编号列表 / 符号列表
         if not keys:
-            items = re.findall(r"(?:^|[\n,，、])[\s]*(?:\d+[.、。]|[-*•])\s*([^\n,，、\d]{2,20})", text)
+            items = re.findall(r"(?:^|[\n,，、])[\s]*(?:\d+[.、。]|[-*•])\s*([^\n,，、\d]{2,20})", clean_text)
             keys = [k.strip() for k in items if k.strip()]
 
         # 逗号/顿号分隔
         if not keys:
-            # 尝试在"提取"/"分析"关键词后面找要素
-            m = re.search(r"[提取分析：:]+\s*(.+)", text)
+            m = re.search(r"[提取分析：:]+\s*(.+)", clean_text)
             if m:
                 raw = m.group(1)
                 keys = [k.strip() for k in re.split(r"[,，、\n]", raw) if k.strip()]
 
-        return keys, file_url
+        return keys, file_url, file_id
 
     # ──────────────────────────────────────────────────────────────────────
     # 核心流程（非流式）

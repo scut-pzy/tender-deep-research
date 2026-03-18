@@ -101,17 +101,25 @@ async def chat_completions(req: ChatCompletionRequest):
     messages = [m.model_dump() for m in req.messages]
 
     # 解析用户输入
-    keys, file_url = orchestrator.parse_user_input(messages)
+    keys, file_url, file_id = orchestrator.parse_user_input(messages)
     if not keys:
         raise HTTPException(status_code=400, detail="未能从消息中解析出要素清单，请检查输入格式")
-    if not file_url:
-        raise HTTPException(status_code=400, detail="未能从消息中找到 PDF URL，请在消息中包含文件链接")
 
-    # 下载文件
-    try:
-        pdf_path = await download_file(file_url, CFG["files"]["upload_dir"])
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"文件下载失败: {e}")
+    # 定位 PDF 文件
+    upload_dir = Path(CFG["files"]["upload_dir"])
+    if file_id:
+        # 通过已上传的 file_id 直接找本地文件
+        matches = list(upload_dir.glob(f"{file_id}.*"))
+        if not matches:
+            raise HTTPException(status_code=404, detail=f"file_id '{file_id}' 对应的文件不存在，请先上传")
+        pdf_path = str(matches[0])
+    elif file_url:
+        try:
+            pdf_path = await download_file(file_url, str(upload_dir))
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"文件下载失败: {e}")
+    else:
+        raise HTTPException(status_code=400, detail="请在消息中提供文件（上传后的 file_id 或 PDF URL）")
 
     # 流式响应
     if req.stream:
