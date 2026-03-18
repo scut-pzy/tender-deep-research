@@ -1,5 +1,6 @@
 """基于 FAISS 的 RAG 语义检索引擎。"""
-import math
+import pickle
+from pathlib import Path
 
 import faiss
 import numpy as np
@@ -56,6 +57,29 @@ class RAGEngine:
             chunk["score"] = float(score)
             results.append(chunk)
         return results
+
+    def save(self, vectors_dir: str, cache_key: str) -> None:
+        """将 FAISS 索引和 chunks 序列化到磁盘。"""
+        path = Path(vectors_dir) / f"{cache_key}.pkl"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "wb") as f:
+            pickle.dump({
+                "index": faiss.serialize_index(self.index),
+                "chunks": self.chunks,
+            }, f)
+        logger.info("索引已保存: %s", path)
+
+    def load(self, vectors_dir: str, cache_key: str) -> bool:
+        """从磁盘加载索引，返回 True 表示成功，False 表示缓存不存在。"""
+        path = Path(vectors_dir) / f"{cache_key}.pkl"
+        if not path.exists():
+            return False
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        self.index = faiss.deserialize_index(data["index"])
+        self.chunks = data["chunks"]
+        logger.info("索引从缓存加载: %s（%d 块）", path, len(self.chunks))
+        return True
 
     async def search_for_keys(self, keys: list[str]) -> dict[str, list[dict]]:
         """对每个招标要素分别检索，返回 {key: [相关文本块, ...]} 映射。"""
