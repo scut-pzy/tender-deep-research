@@ -124,13 +124,13 @@ async def chat_completions(req: ChatCompletionRequest):
     # 流式响应
     if req.stream:
         return StreamingResponse(
-            _stream_response(keys, pdf_path),
+            _stream_response(keys, pdf_path, req.use_cache),
             media_type="text/event-stream",
         )
 
     # 非流式响应
     try:
-        result = await orchestrator.run(keys, pdf_path)
+        result = await orchestrator.run(keys, pdf_path, req.use_cache)
     except Exception as e:
         logger.exception("分析失败")
         raise HTTPException(status_code=500, detail=f"分析失败: {e}")
@@ -142,7 +142,7 @@ async def chat_completions(req: ChatCompletionRequest):
     )
 
 
-async def _stream_response(keys: list[str], pdf_path: str):
+async def _stream_response(keys: list[str], pdf_path: str, use_cache: bool = True):
     """SSE 生成器：逐步推送分析进度。"""
     resp_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"
     created = int(time.time())
@@ -156,7 +156,7 @@ async def _stream_response(keys: list[str], pdf_path: str):
     yield f"data: {first.model_dump_json()}\n\n"
 
     try:
-        async for chunk_text in orchestrator.run_stream(keys, pdf_path):
+        async for chunk_text in orchestrator.run_stream(keys, pdf_path, use_cache):
             chunk = ChatCompletionStreamResponse(
                 id=resp_id,
                 created=created,

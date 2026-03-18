@@ -1,6 +1,8 @@
 """主控调度器：串联文档处理、RAG、Policy、Critic 的完整流程。"""
+import hashlib
 import re
 import json
+from pathlib import Path
 from typing import AsyncGenerator
 
 from core.critic import CriticAgent
@@ -27,6 +29,45 @@ class Orchestrator:
         self.policy_agent = PolicyAgent(LLMClient(cfg["policy_llm"]))
         self.critic_agent = CriticAgent(VLMClient(cfg["critic_vlm"]))
         self.embed_client = EmbeddingClient(cfg["embedding"])
+
+    # ──────────────────────────────────────────────────────────────────────
+    # RAG 构建（含缓存）
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _cache_key(self, pdf_path: str) -> str:
+        """以 PDF 内容 MD5 + 模型 + 分块参数 生成缓存 key。"""
+        content_md5 = hashlib.md5(Path(pdf_path).read_bytes()).hexdigest()[:12]
+        model = self.embed_client.model
+        cs = self.rag_cfg["chunk_size"]
+        co = self.rag_cfg["chunk_overlap"]
+        return hashlib.md5(f"{content_md5}|{model}|{cs}|{co}".encode()).hexdigest()[:12]
+
+    async def _build_rag(
+        self, pages: list[dict], pdf_path: str, use_cache: bool
+    ) -> tuple[RAGEngine, bool]:
+        """
+        构建或加载 RAG 索引。
+        返回 (rag, from_cache)。
+        """
+        vectors_dir = self.cfg["files"]["vectors_dir"]
+        rag = RAGEngine(self.embed_client, self.rag_cfg["top_k"])
+
+        if use_cache:
+            key = self._cache_key(pdf_path)
+            if rag.load(vectors_dir, key):
+                return rag, True
+
+        chunks = chunk_text_by_pages(
+            pages,
+            self.rag_cfg["chunk_size"],
+            self.rag_cfg["chunk_overlap"],
+        )
+        await rag.build_index(chunks)
+
+        # 构建完成后始终保存缓存，方便下次使用
+        key = self._cache_key(pdf_path)
+        rag.save(vectors_dir, key)
+        return rag, False
 
     # ──────────────────────────────────────────────────────────────────────
     # 输入解析
@@ -93,19 +134,13 @@ class Orchestrator:
     # 核心流程（非流式）
     # ──────────────────────────────────────────────────────────────────────
 
-    async def run(self, keys: list[str], pdf_path: str) -> ExtractionResult:
+    async def run(self, keys: list[str], pdf_path: str, use_cache: bool = True) -> ExtractionResult:
         # Step 1: 文档预处理
         pages_data_obj = process_pdf(pdf_path, self.pages_dir)
         pages = pages_data_obj["pages"]
 
-        # Step 2: 构建 RAG 索引
-        chunks = chunk_text_by_pages(
-            pages,
-            self.rag_cfg["chunk_size"],
-            self.rag_cfg["chunk_overlap"],
-        )
-        rag = RAGEngine(self.embed_client, self.rag_cfg["top_k"])
-        await rag.build_index(chunks)
+        # Step 2: 构建 RAG 索引（use_cache=True 时优先读缓存）
+        rag, _ = await self._build_rag(pages, pdf_path, use_cache)
 
         # Step 3: RAG 检索
         rag_results = await rag.search_for_keys(keys)
@@ -151,7 +186,7 @@ class Orchestrator:
     # ──────────────────────────────────────────────────────────────────────
 
     async def run_stream(
-        self, keys: list[str], pdf_path: str
+        self, keys: list[str], pdf_path: str, use_cache: bool = True
     ) -> AsyncGenerator[str, None]:
         yield "🔍 开始分析投标文件...\n\n"
 
@@ -164,14 +199,11 @@ class Orchestrator:
 
         # Step 2
         yield "🧮 **Step 2/5: 构建检索索引**\n"
-        chunks = chunk_text_by_pages(
-            pages,
-            self.rag_cfg["chunk_size"],
-            self.rag_cfg["chunk_overlap"],
-        )
-        rag = RAGEngine(self.embed_client, self.rag_cfg["top_k"])
-        await rag.build_index(chunks)
-        yield f"  ✅ 索引构建完成：**{len(chunks)}** 个文本块\n\n"
+        rag, from_cache = await self._build_rag(pages, pdf_path, use_cache)
+        if from_cache:
+            yield f"  ⚡ 命中缓存，跳过 Embedding（共 **{rag.index.ntotal}** 个向量）\n\n"
+        else:
+            yield f"  ✅ 索引构建完成：**{rag.index.ntotal}** 个文本块\n\n"
 
         # Step 3
         yield "🔎 **Step 3/5: RAG 语义检索**\n"

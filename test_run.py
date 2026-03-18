@@ -26,6 +26,10 @@ KEYS = [
 
 SERVER_URL = "http://localhost:8000"   # 服务端地址
 
+# True  = 优先读已缓存的向量索引，跳过切分和 Embedding（测试时推荐）
+# False = 忽略缓存，强制重新切分并向量化
+USE_CACHE = True
+
 # ══════════════════════════════════════════════════════
 
 def main():
@@ -56,6 +60,7 @@ def main():
         model="tender-research",
         messages=[{"role": "user", "content": message}],
         stream=True,
+        extra_body={"use_cache": USE_CACHE},
     )
 
     for chunk in stream:

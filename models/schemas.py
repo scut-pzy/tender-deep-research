@@ -19,6 +19,7 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
+    use_cache: bool = True   # True=优先读向量缓存；False=强制重新切分并向量化
 
 
 # ── OpenAI 非流式响应 ──────────────────────────────────────────────────────
