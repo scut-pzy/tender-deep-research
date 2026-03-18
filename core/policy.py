@@ -1,84 +1,93 @@
-"""招标要素提取（Policy LLM）。"""
+"""Policy LLM 智能体：招标要素提取与迭代重写。"""
+import json
 import re
+from typing import Optional
 
 from core.llm_client import LLMClient
-from core.rag import RAGIndex
-from models.schemas import ElementExtraction
-from prompts.extract import TENDER_ELEMENTS, build_extract_prompt
+from models.schemas import ExtractionItem
+from prompts.extract import build_extract_prompt
 from prompts.rewrite import build_rewrite_prompt
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_VALUE_RE = re.compile(r"要素值[：:]\s*(.+)", re.MULTILINE)
-_CONF_RE = re.compile(r"置信度[：:]\s*([0-9.]+)", re.MULTILINE)
+_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*([\s\S]+?)```", re.IGNORECASE)
 
 
-def _parse_response(text: str) -> tuple[str, float]:
-    value_m = _VALUE_RE.search(text)
-    conf_m = _CONF_RE.search(text)
-    value = value_m.group(1).strip() if value_m else text.strip()
-    confidence = float(conf_m.group(1)) if conf_m else 0.5
-    return value, min(max(confidence, 0.0), 1.0)
+class PolicyAgent:
+    def __init__(self, llm: LLMClient):
+        self.llm = llm
 
-
-async def extract_elements(
-    llm: LLMClient, rag: RAGIndex
-) -> list[ElementExtraction]:
-    results = []
-    for element in TENDER_ELEMENTS:
-        chunks = await rag.search(element)
-        messages = build_extract_prompt(element, chunks)
+    def _parse_response(self, raw: str, keys: list[str]) -> list[ExtractionItem]:
+        """解析 LLM 返回的 JSON，容错处理各种异常格式。"""
+        # 尝试直接解析
+        text = raw.strip()
         try:
-            raw = await llm.chat(messages)
-            value, confidence = _parse_response(raw)
-        except Exception as e:
-            logger.warning("提取 [%s] 失败: %s", element, e)
-            value, confidence = "未能提取", 0.0
-        results.append(ElementExtraction(
-            element=element,
-            value=value,
-            confidence=confidence,
-            source_chunks=[c["chunk_id"] for c in chunks],
-        ))
-        logger.info("已提取 [%s]: conf=%.2f", element, confidence)
-    return results
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            # 尝试从代码块中提取
+            m = _JSON_BLOCK_RE.search(text)
+            if m:
+                try:
+                    data = json.loads(m.group(1))
+                except json.JSONDecodeError:
+                    data = None
+            else:
+                data = None
 
+        if data is None:
+            logger.warning("JSON 解析失败，返回默认结果")
+            return [ExtractionItem(key=k) for k in keys]
 
-async def rewrite_elements(
-    llm: LLMClient,
-    rag: RAGIndex,
-    elements: list[ElementExtraction],
-    critic_feedback: list,
-) -> list[ElementExtraction]:
-    if not critic_feedback:
-        return elements
+        raw_items = data.get("items", data) if isinstance(data, dict) else data
+        if not isinstance(raw_items, list):
+            return [ExtractionItem(key=k) for k in keys]
 
-    updated = []
-    for elem in elements:
-        relevant_fb = [
-            f for f in critic_feedback if f.severity in ("medium", "high")
-        ]
-        if not relevant_fb:
-            updated.append(elem)
-            continue
-        chunks = await rag.search(elem.element)
-        messages = build_rewrite_prompt(
-            elem.element,
-            elem.value,
-            [{"issue": f.issue, "suggestion": f.suggestion, "severity": f.severity} for f in relevant_fb],
-            chunks,
-        )
-        try:
-            raw = await llm.chat(messages)
-            value, confidence = _parse_response(raw)
-            updated.append(ElementExtraction(
-                element=elem.element,
-                value=value,
-                confidence=confidence,
-                source_chunks=elem.source_chunks,
-            ))
-        except Exception as e:
-            logger.warning("重写 [%s] 失败: %s", elem.element, e)
-            updated.append(elem)
-    return updated
+        # 构建 key→item 映射
+        item_map = {}
+        for it in raw_items:
+            if isinstance(it, dict) and "key" in it:
+                item_map[it["key"]] = ExtractionItem(
+                    key=it["key"],
+                    value=it.get("value"),
+                    source_page=it.get("source_page"),
+                    source_text=it.get("source_text"),
+                    confidence=float(it.get("confidence", 0.5)),
+                )
+
+        # 按原始 keys 顺序返回，未解析到的补默认值
+        return [item_map.get(k, ExtractionItem(key=k)) for k in keys]
+
+    async def extract(
+        self, keys: list[str], rag_results: dict[str, list[dict]]
+    ) -> list[ExtractionItem]:
+        """首次提取所有招标要素。"""
+        messages = build_extract_prompt(keys, rag_results)
+        raw = await self.llm.chat(messages, json_mode=True)
+        items = self._parse_response(raw, keys)
+        for item in items:
+            logger.info(
+                "提取「%s」= %s (第%s页, conf=%.2f)",
+                item.key, item.value, item.source_page, item.confidence,
+            )
+        return items
+
+    async def rewrite(
+        self,
+        keys: list[str],
+        rag_results: dict[str, list[dict]],
+        prev_items: list[ExtractionItem],
+        critic_feedbacks: list,
+    ) -> list[ExtractionItem]:
+        """根据 Critic 反馈重写失败的要素。"""
+        prev_dicts = [it.model_dump() for it in prev_items]
+        fb_dicts = [fb.model_dump() for fb in critic_feedbacks]
+        messages = build_rewrite_prompt(keys, rag_results, prev_dicts, fb_dicts)
+        raw = await self.llm.chat(messages, json_mode=True)
+        items = self._parse_response(raw, keys)
+        for item in items:
+            logger.info(
+                "重写「%s」= %s (第%s页, conf=%.2f)",
+                item.key, item.value, item.source_page, item.confidence,
+            )
+        return items

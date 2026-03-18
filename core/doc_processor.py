@@ -1,5 +1,5 @@
-"""PDF 文档处理：文本提取 + 页面渲染。"""
-import json
+"""PDF 文档预处理：文本提取 + 页面渲染（300 DPI）。"""
+import base64
 from pathlib import Path
 
 import fitz  # PyMuPDF
@@ -8,42 +8,86 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-DPI = 150  # 页面渲染分辨率
+DPI = 300
+MATRIX = fitz.Matrix(DPI / 72, DPI / 72)
 
 
-def process_pdf(pdf_path: str, pages_dir: str, file_id: str) -> tuple[list[dict], int]:
+def process_pdf(pdf_path: str, pages_dir: str) -> dict:
     """
-    解析 PDF，返回 (chunks, total_pages)。
-    每个 chunk: {chunk_id, text, page, image_path}
-    同时将每页渲染为 PNG 保存到 pages_dir/{file_id}/page_{n}.png。
+    解析 PDF，返回:
+    {
+        "total_pages": int,
+        "pages": [
+            {
+                "page_num": 1,
+                "text": "...",          # 纯文本，供 RAG 使用
+                "image_base64": "...",  # PNG base64，供 Critic VLM 使用
+            },
+            ...
+        ]
+    }
+    页面图片缓存到 pages_dir/<PDF_MD5>/page_N.png，同一 PDF 不重复渲染。
     """
-    out_dir = Path(pages_dir) / file_id
-    out_dir.mkdir(parents=True, exist_ok=True)
+    import hashlib
+    pdf_md5 = hashlib.md5(Path(pdf_path).read_bytes()).hexdigest()[:12]
+    img_dir = Path(pages_dir) / pdf_md5
+    img_dir.mkdir(parents=True, exist_ok=True)
 
     doc = fitz.open(pdf_path)
     total_pages = len(doc)
-    chunks = []
+    pages = []
 
-    for page_num, page in enumerate(doc):
-        # 渲染页面图片
-        mat = fitz.Matrix(DPI / 72, DPI / 72)
-        pix = page.get_pixmap(matrix=mat)
-        img_path = str(out_dir / f"page_{page_num + 1}.png")
-        pix.save(img_path)
+    for page_num, page in enumerate(doc, start=1):
+        # ── 文本提取 ──
+        text = page.get_text("text").strip()
 
-        # 提取文本块
-        blocks = page.get_text("blocks")
-        for i, block in enumerate(blocks):
-            text = block[4].strip()
-            if not text:
-                continue
-            chunks.append({
-                "chunk_id": f"{file_id}_p{page_num + 1}_b{i}",
-                "text": text,
-                "page": page_num + 1,
-                "image_path": img_path,
-            })
+        # ── 图片渲染（缓存） ──
+        img_path = img_dir / f"page_{page_num}.png"
+        if not img_path.exists():
+            pix = page.get_pixmap(matrix=MATRIX)
+            pix.save(str(img_path))
+
+        image_base64 = base64.b64encode(img_path.read_bytes()).decode()
+
+        pages.append({
+            "page_num": page_num,
+            "text": text,
+            "image_base64": image_base64,
+        })
 
     doc.close()
-    logger.info("PDF 处理完成: %d 页, %d 文本块", total_pages, len(chunks))
-    return chunks, total_pages
+    logger.info("PDF 处理完成: %s，共 %d 页", Path(pdf_path).name, total_pages)
+    return {"total_pages": total_pages, "pages": pages}
+
+
+def chunk_text_by_pages(
+    pages: list[dict], chunk_size: int = 512, chunk_overlap: int = 64
+) -> list[dict]:
+    """
+    将每页文本滑动切分为文本块。
+    返回: [{"text": "...", "page_num": 3, "chunk_id": 0}, ...]
+    """
+    chunks = []
+    chunk_id = 0
+    for page in pages:
+        text = page["text"]
+        page_num = page["page_num"]
+        if not text:
+            continue
+        start = 0
+        while start < len(text):
+            end = start + chunk_size
+            chunk_text = text[start:end]
+            if chunk_text.strip():
+                chunks.append({
+                    "text": chunk_text,
+                    "page_num": page_num,
+                    "chunk_id": chunk_id,
+                })
+                chunk_id += 1
+            if end >= len(text):
+                break
+            start = end - chunk_overlap
+
+    logger.info("文本分块完成：%d 个块", len(chunks))
+    return chunks

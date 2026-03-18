@@ -1,17 +1,23 @@
 # ============================================
+# 服务配置
+# ============================================
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+
+# ============================================
 # 模型配置
 # ============================================
 
 policy_llm:
-  # Qwen3-8B 文本模型
   api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   api_key: "sk-your-dashscope-key"
-  model: "qwen3-8b"
+  model: "qwen-plus"
   temperature: 0.3
   max_tokens: 4096
 
 critic_vlm:
-  # Qwen-VL 视觉模型
   api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   api_key: "sk-your-dashscope-key"
   model: "qwen-vl-max"
@@ -19,7 +25,6 @@ critic_vlm:
   max_tokens: 2048
 
 embedding:
-  # DeepSeek Embedding
   api_base: "https://api.deepseek.com/v1"
   api_key: "sk-your-deepseek-key"
   model: "deepseek-embedding"
@@ -30,24 +35,24 @@ embedding:
 # ============================================
 
 rag:
-  chunk_size: 800          # 每个文本块大小(字符)
-  chunk_overlap: 200       # 块之间重叠
-  top_k: 5                 # 每个要素检索top_k个块
+  chunk_size: 512        # 每个文本块大小（字符）
+  chunk_overlap: 64      # 块间重叠字符数
+  top_k: 5               # 每个要素检索 top_k 个块
 
 # ============================================
-# 流程配置
+# 流程控制
 # ============================================
 
-orchestrator:
-  max_iterations: 3        # 最大迭代次数
-  confidence_threshold: 0.8 # 置信度阈值
+pipeline:
+  max_iterations: 3         # 最大迭代轮次
+  confidence_threshold: 0.8 # 置信度阈值，达到后提前停止
 
 # ============================================
-# 服务配置
+# 文件存储
 # ============================================
 
-server:
-  host: "0.0.0.0"
-  port: 8000
-  upload_dir: "./uploads"
-  cache_dir: "./cache"
+files:
+  upload_dir: "./cache/uploads"
+  pages_dir: "./cache/pages"
+  vectors_dir: "./cache/vectors"
+  max_size_mb: 100

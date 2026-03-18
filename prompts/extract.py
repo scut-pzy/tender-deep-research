@@ -1,34 +1,41 @@
-"""招标要素提取提示词。"""
+"""Policy 提取提示词：首次提取 + 迭代重写。"""
 
-TENDER_ELEMENTS = [
-    "项目名称",
-    "采购单位",
-    "预算金额",
-    "投标截止时间",
-    "资质要求",
-    "技术规格",
-    "评分标准",
-    "交货/服务期限",
-    "付款条件",
-    "联系方式",
-]
+SYSTEM_PROMPT = """\
+你是一名专业的招标文件分析专家，擅长从复杂的标书文档中精准提取关键信息。
+
+## 输出规则
+- 严格按 JSON 格式输出，不要有任何额外说明
+- 每个要素包含字段：key、value、source_page、source_text、confidence
+  - key: 要素名称（与输入完全一致）
+  - value: 提取到的值（未找到则为 null）
+  - source_page: 来源页码（整数，未找到则为 null）
+  - source_text: 来源原文片段（50字以内，未找到则为 null）
+  - confidence: 置信度（0.0~1.0 的浮点数）
+- 输出格式：{"items": [...]}
+"""
 
 
-def build_extract_prompt(element: str, context_chunks: list[dict]) -> list[dict]:
-    context = "\n\n".join(
-        f"[第{c['page']}页]\n{c['text']}" for c in context_chunks
-    )
+def build_extract_prompt(keys: list[str], rag_results: dict[str, list[dict]]) -> list[dict]:
+    """构建首次要素提取的 user 消息。"""
+    lines = ["## 需要提取的招标要素："]
+    for i, key in enumerate(keys, 1):
+        lines.append(f"{i}. {key}")
+
+    lines.append("")
+    for key in keys:
+        hits = rag_results.get(key, [])
+        lines.append(f"## 与「{key}」相关的内容：")
+        if not hits:
+            lines.append("（未检索到相关内容）")
+        else:
+            for hit in hits:
+                lines.append(
+                    f"[第{hit['page_num']}页] (相关度:{hit['score']:.2f})\n{hit['text']}"
+                )
+        lines.append("")
+
+    lines.append("请按 JSON 格式输出所有要素的提取结果。")
     return [
-        {
-            "role": "system",
-            "content": (
-                "你是一名专业的招标文件分析专家。"
-                "根据提供的招标文件片段，精准提取指定要素信息，并给出置信度(0~1)。"
-                "输出格式：\n要素值：<内容>\n置信度：<0~1的小数>"
-            ),
-        },
-        {
-            "role": "user",
-            "content": f"请从以下招标文件内容中提取【{element}】：\n\n{context}",
-        },
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": "\n".join(lines)},
     ]

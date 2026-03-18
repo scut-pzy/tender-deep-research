@@ -1,66 +1,112 @@
-"""视觉审核（Critic VLM）：对 PDF 页面图片进行分析。"""
+"""Critic VLM 智能体：通过页面图片视觉核验 Policy 提取结果。"""
 import json
 import re
-from pathlib import Path
+from collections import defaultdict
 
 from core.llm_client import VLMClient
-from models.schemas import CriticFeedback
-from prompts.critic_vision import build_critic_prompt
+from models.schemas import CriticFeedback, ExtractionItem
+from prompts.critic_vision import CRITIC_SYSTEM_PROMPT, build_batch_critic_prompt
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_JSON_RE = re.compile(r"\[.*?\]", re.DOTALL)
+_JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*([\s\S]+?)```", re.IGNORECASE)
 
 
-def _parse_feedback(raw: str, page: int) -> list[CriticFeedback]:
-    m = _JSON_RE.search(raw)
-    if not m:
-        return []
-    try:
-        items = json.loads(m.group())
+class CriticAgent:
+    def __init__(self, vlm: VLMClient):
+        self.vlm = vlm
+
+    def _parse_feedback(self, raw: str, items: list[dict]) -> list[CriticFeedback]:
+        text = raw.strip()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            m = _JSON_BLOCK_RE.search(text)
+            if m:
+                try:
+                    data = json.loads(m.group(1))
+                except json.JSONDecodeError:
+                    data = None
+            else:
+                data = None
+
+        if data is None:
+            logger.warning("Critic JSON 解析失败")
+            return [CriticFeedback(key=it["key"], verified=False, comment="解析失败") for it in items]
+
+        raw_list = data if isinstance(data, list) else [data]
         feedbacks = []
-        for item in items:
+        for entry in raw_list:
+            if not isinstance(entry, dict):
+                continue
             feedbacks.append(CriticFeedback(
-                page=page,
-                issue=item.get("issue", ""),
-                suggestion=item.get("suggestion", ""),
-                severity=item.get("severity", "low"),
+                key=entry.get("key", ""),
+                verified=bool(entry.get("verified", False)),
+                actual_value=entry.get("actual_value"),
+                comment=entry.get("comment", ""),
             ))
         return feedbacks
-    except json.JSONDecodeError:
-        logger.warning("第 %d 页 Critic 输出解析失败", page)
-        return []
 
+    async def verify(
+        self, items: list[ExtractionItem], pages_data: list[dict]
+    ) -> list[CriticFeedback]:
+        """
+        对所有提取结果进行视觉核验。
+        - 按 source_page 分组，同一页一次 VLM 调用
+        - 无 source_page 的要素直接标记为"无法核验"
+        """
+        # 建立 page_num → base64 映射
+        page_map: dict[int, str] = {p["page_num"]: p["image_base64"] for p in pages_data}
 
-async def critique_pages(
-    vlm: VLMClient,
-    pages_dir: str,
-    file_id: str,
-    elements: list,
-    sample_pages: int = 5,
-) -> list[CriticFeedback]:
-    """对文档的代表性页面进行视觉审核。"""
-    page_dir = Path(pages_dir) / file_id
-    page_images = sorted(page_dir.glob("page_*.png"), key=lambda p: int(p.stem.split("_")[1]))
+        # 按页码分组（无页码的单独处理）
+        grouped: dict[int, list[dict]] = defaultdict(list)
+        unverifiable: list[CriticFeedback] = []
 
-    # 均匀采样页面，避免全量处理
-    if len(page_images) > sample_pages:
-        step = len(page_images) // sample_pages
-        page_images = page_images[::step][:sample_pages]
+        for item in items:
+            if item.source_page is None or item.value is None:
+                unverifiable.append(CriticFeedback(
+                    key=item.key,
+                    verified=False,
+                    comment="无来源页码或值为空，无法核验",
+                ))
+            else:
+                grouped[item.source_page].append({
+                    "key": item.key,
+                    "value": item.value,
+                    "source_text": item.source_text or "",
+                })
 
-    all_feedback = []
-    for img_path in page_images:
-        page_num = int(img_path.stem.split("_")[1])
-        prompt = build_critic_prompt(page_num, [
-            {"element": e.element, "value": e.value} for e in elements
-        ])
-        try:
-            raw = await vlm.chat_with_image(prompt, str(img_path))
-            feedbacks = _parse_feedback(raw, page_num)
-            all_feedback.extend(feedbacks)
-            logger.info("第 %d 页审核完成，发现 %d 个问题", page_num, len(feedbacks))
-        except Exception as e:
-            logger.warning("第 %d 页视觉审核失败: %s", page_num, e)
+        all_feedbacks: list[CriticFeedback] = list(unverifiable)
 
-    return all_feedback
+        for page_num, page_items in grouped.items():
+            if page_num not in page_map:
+                for it in page_items:
+                    all_feedbacks.append(CriticFeedback(
+                        key=it["key"], verified=False, comment=f"第{page_num}页图片不存在"
+                    ))
+                continue
+
+            prompt = build_batch_critic_prompt(page_num, page_items)
+            try:
+                raw = await self.vlm.chat_with_image(
+                    text_prompt=prompt,
+                    image_base64_list=[page_map[page_num]],
+                )
+                feedbacks = self._parse_feedback(raw, page_items)
+                all_feedbacks.extend(feedbacks)
+                for fb in feedbacks:
+                    mark = "✅" if fb.verified else "❌"
+                    logger.info(
+                        "%s 「%s」%s",
+                        mark, fb.key,
+                        f"→ 实际值: {fb.actual_value}" if not fb.verified else "",
+                    )
+            except Exception as e:
+                logger.warning("第 %d 页 VLM 调用失败: %s", page_num, e)
+                for it in page_items:
+                    all_feedbacks.append(CriticFeedback(
+                        key=it["key"], verified=False, comment=f"VLM调用失败: {e}"
+                    ))
+
+        return all_feedbacks

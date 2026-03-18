@@ -1,13 +1,15 @@
-"""主流程编排器：提取→审核→重写，迭代至置信度达标。"""
-import statistics
+"""主控调度器：串联文档处理、RAG、Policy、Critic 的完整流程。"""
+import re
+import json
 from typing import AsyncGenerator
 
-from core.critic import critique_pages
-from core.doc_processor import process_pdf
-from core.llm_client import VLMClient, build_clients
-from core.policy import extract_elements, rewrite_elements
-from core.rag import RAGIndex
-from models.schemas import AnalysisResponse, IterationResult
+from core.critic import CriticAgent
+from core.doc_processor import chunk_text_by_pages, process_pdf
+from core.llm_client import EmbeddingClient, LLMClient, VLMClient
+from core.policy import PolicyAgent
+from core.rag import RAGEngine
+from models.schemas import CriticFeedback, ExtractionItem, ExtractionResult
+from utils.file_handler import download_file
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
@@ -16,97 +18,223 @@ logger = get_logger(__name__)
 class Orchestrator:
     def __init__(self, cfg: dict):
         self.cfg = cfg
-        policy_cfg = cfg["policy_llm"]
-        critic_cfg = cfg["critic_vlm"]
-        self.max_iterations = cfg["orchestrator"]["max_iterations"]
-        self.confidence_threshold = cfg["orchestrator"]["confidence_threshold"]
-        self.pages_dir = cfg["server"]["cache_dir"] + "/pages"
-        self.vectors_dir = cfg["server"]["cache_dir"] + "/vectors"
+        self.pages_dir = cfg["files"]["pages_dir"]
+        self.upload_dir = cfg["files"]["upload_dir"]
+        self.max_iterations = cfg["pipeline"]["max_iterations"]
+        self.confidence_threshold = cfg["pipeline"]["confidence_threshold"]
         self.rag_cfg = cfg["rag"]
 
-        from core.llm_client import LLMClient
-        self.policy_llm = LLMClient(policy_cfg)
-        self.critic_vlm = VLMClient(critic_cfg)
+        self.policy_agent = PolicyAgent(LLMClient(cfg["policy_llm"]))
+        self.critic_agent = CriticAgent(VLMClient(cfg["critic_vlm"]))
+        self.embed_client = EmbeddingClient(cfg["embedding"])
 
-        embed_cfg = cfg["embedding"]
-        import httpx
-        from openai import AsyncOpenAI
-        embed_client = AsyncOpenAI(
-            api_key=embed_cfg["api_key"],
-            base_url=embed_cfg["api_base"],
-            http_client=httpx.AsyncClient(timeout=60),
+    # ──────────────────────────────────────────────────────────────────────
+    # 输入解析
+    # ──────────────────────────────────────────────────────────────────────
+
+    def parse_user_input(self, messages: list[dict]) -> tuple[list[str], str | None]:
+        """
+        从对话消息中解析出：
+        - keys: 需要提取的要素清单
+        - file_url: PDF 文件的 URL（或 None）
+
+        支持格式：
+          1. 编号列表："1. 项目名称\n2. 投标总价"
+          2. 符号列表："- 项目名称\n- 投标总价"
+          3. JSON 数组：'["项目名称","投标总价"]'
+          4. 混合 + URL："请分析 https://xxx/a.pdf\n提取: 1.项目名称 2.投标总价"
+        """
+        # 合并所有用户消息
+        text = " ".join(
+            m["content"] if isinstance(m["content"], str) else ""
+            for m in messages
+            if m.get("role") == "user"
         )
-        self.embed_client = embed_client
-        self.embed_model = embed_cfg["model"]
-        self.embed_dims = embed_cfg.get("dimensions", 1024)
 
-    async def run(self, file_id: str, pdf_path: str) -> AsyncGenerator[dict, None]:
-        """主流程，yield 进度事件和最终结果。"""
-        yield {"event": "start", "message": "开始处理 PDF 文档…"}
+        # 提取 URL
+        url_match = re.search(r"https?://\S+\.pdf\S*", text, re.IGNORECASE)
+        file_url = url_match.group(0).rstrip("。，,.") if url_match else None
 
-        # 1. 文档处理
-        chunks, total_pages = process_pdf(pdf_path, self.pages_dir, file_id)
-        yield {"event": "progress", "message": f"文档解析完成，共 {total_pages} 页，{len(chunks)} 个文本块"}
+        # 提取要素清单
+        keys: list[str] = []
 
-        # 2. 构建 RAG 索引
-        rag = RAGIndex(
-            self.embed_client,
-            self.embed_model,
-            self.embed_dims,
-            self.rag_cfg["top_k"],
+        # JSON 数组
+        json_match = re.search(r"\[([^\]]+)\]", text)
+        if json_match:
+            try:
+                keys = json.loads(f"[{json_match.group(1)}]")
+            except Exception:
+                pass
+
+        # 编号列表 / 符号列表
+        if not keys:
+            items = re.findall(r"(?:^|[\n,，、])[\s]*(?:\d+[.、。]|[-*•])\s*([^\n,，、\d]{2,20})", text)
+            keys = [k.strip() for k in items if k.strip()]
+
+        # 逗号/顿号分隔
+        if not keys:
+            # 尝试在"提取"/"分析"关键词后面找要素
+            m = re.search(r"[提取分析：:]+\s*(.+)", text)
+            if m:
+                raw = m.group(1)
+                keys = [k.strip() for k in re.split(r"[,，、\n]", raw) if k.strip()]
+
+        return keys, file_url
+
+    # ──────────────────────────────────────────────────────────────────────
+    # 核心流程（非流式）
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def run(self, keys: list[str], pdf_path: str) -> ExtractionResult:
+        # Step 1: 文档预处理
+        pages_data_obj = process_pdf(pdf_path, self.pages_dir)
+        pages = pages_data_obj["pages"]
+
+        # Step 2: 构建 RAG 索引
+        chunks = chunk_text_by_pages(
+            pages,
+            self.rag_cfg["chunk_size"],
+            self.rag_cfg["chunk_overlap"],
         )
-        await rag.build(chunks)
-        rag.save(self.vectors_dir, file_id)
-        yield {"event": "progress", "message": "向量索引构建完成"}
+        rag = RAGEngine(self.embed_client, self.rag_cfg["top_k"])
+        await rag.build_index(chunks)
 
-        all_iterations: list[IterationResult] = []
-        elements = []
-        critic_feedback = []
+        # Step 3: RAG 检索
+        rag_results = await rag.search_for_keys(keys)
 
-        for i in range(1, self.max_iterations + 1):
-            yield {"event": "iteration_start", "iteration": i, "message": f"第 {i} 轮分析开始"}
+        items: list[ExtractionItem] = []
+        feedbacks: list[CriticFeedback] = []
+        converged = False
 
-            # 3. 要素提取（首轮）或重写（后续轮）
-            if i == 1:
-                elements = await extract_elements(self.policy_llm, rag)
-                yield {"event": "progress", "message": f"第 {i} 轮：提取 {len(elements)} 个要素"}
+        for iteration in range(1, self.max_iterations + 1):
+            logger.info("==== 第 %d 轮 ====", iteration)
+
+            # Step 4: Policy 提取 / 重写
+            if iteration == 1:
+                items = await self.policy_agent.extract(keys, rag_results)
             else:
-                elements = await rewrite_elements(self.policy_llm, rag, elements, critic_feedback)
-                yield {"event": "progress", "message": f"第 {i} 轮：基于审核反馈重写要素"}
+                items = await self.policy_agent.rewrite(keys, rag_results, items, feedbacks)
 
-            # 4. 视觉审核
-            critic_feedback = await critique_pages(
-                self.critic_vlm, self.pages_dir, file_id, elements
-            )
-            yield {"event": "progress", "message": f"第 {i} 轮：视觉审核发现 {len(critic_feedback)} 个问题"}
+            # Step 5: Critic 验证
+            feedbacks = await self.critic_agent.verify(items, pages)
 
-            # 5. 计算整体置信度
-            overall_conf = statistics.mean(e.confidence for e in elements) if elements else 0.0
+            failed = [fb for fb in feedbacks if not fb.verified]
+            logger.info("第 %d 轮：%d 个要素，%d 个失败", iteration, len(items), len(failed))
 
-            iteration_result = IterationResult(
-                iteration=i,
-                elements=elements,
-                critic_feedback=critic_feedback,
-                overall_confidence=overall_conf,
-                summary=f"第 {i} 轮置信度 {overall_conf:.2f}，发现 {len(critic_feedback)} 个视觉问题",
-            )
-            all_iterations.append(iteration_result)
-            yield {"event": "iteration_end", "iteration": i, "confidence": overall_conf}
+            # 更新已通过要素的 verified 状态
+            verified_keys = {fb.key for fb in feedbacks if fb.verified}
+            for item in items:
+                if item.key in verified_keys:
+                    item.verified = True
 
-            if overall_conf >= self.confidence_threshold:
-                yield {"event": "converged", "message": f"第 {i} 轮达到置信度阈值 {self.confidence_threshold}，停止迭代"}
+            if not failed:
+                converged = True
+                logger.info("全部通过核验，提前收敛")
                 break
 
-        final = AnalysisResponse(
-            file_id=file_id,
-            iterations=all_iterations,
-            final_summary=self._build_summary(all_iterations[-1]),
-            total_pages=total_pages,
+        return ExtractionResult(
+            items=items,
+            total_iterations=iteration,
+            converged=converged,
         )
-        yield {"event": "done", "result": final.model_dump()}
 
-    def _build_summary(self, last: IterationResult) -> str:
-        lines = [f"招标文件分析报告（置信度 {last.overall_confidence:.0%}）", ""]
-        for elem in last.elements:
-            lines.append(f"【{elem.element}】{elem.value}（置信度：{elem.confidence:.0%}）")
+    # ──────────────────────────────────────────────────────────────────────
+    # 核心流程（流式）
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def run_stream(
+        self, keys: list[str], pdf_path: str
+    ) -> AsyncGenerator[str, None]:
+        yield "🔍 开始分析投标文件...\n\n"
+
+        # Step 1
+        yield "📄 **Step 1/5: 文档预处理**\n"
+        pages_data_obj = process_pdf(pdf_path, self.pages_dir)
+        pages = pages_data_obj["pages"]
+        total = pages_data_obj["total_pages"]
+        yield f"  ✅ 共识别 **{total}** 页\n\n"
+
+        # Step 2
+        yield "🧮 **Step 2/5: 构建检索索引**\n"
+        chunks = chunk_text_by_pages(
+            pages,
+            self.rag_cfg["chunk_size"],
+            self.rag_cfg["chunk_overlap"],
+        )
+        rag = RAGEngine(self.embed_client, self.rag_cfg["top_k"])
+        await rag.build_index(chunks)
+        yield f"  ✅ 索引构建完成：**{len(chunks)}** 个文本块\n\n"
+
+        # Step 3
+        yield "🔎 **Step 3/5: RAG 语义检索**\n"
+        rag_results = await rag.search_for_keys(keys)
+        for key, hits in rag_results.items():
+            pages_hits = sorted({h["page_num"] for h in hits})
+            yield f"  - 「{key}」→ 在第 {pages_hits} 页找到相关内容\n"
+        yield "  ✅ 检索完成\n\n"
+
+        items: list[ExtractionItem] = []
+        feedbacks: list[CriticFeedback] = []
+        converged = False
+        iteration = 0
+
+        for iteration in range(1, self.max_iterations + 1):
+            # Step 4
+            yield f"📝 **Step 4/5: Policy LLM 提取 (第{iteration}轮)**\n"
+            if iteration == 1:
+                items = await self.policy_agent.extract(keys, rag_results)
+            else:
+                items = await self.policy_agent.rewrite(keys, rag_results, items, feedbacks)
+            for item in items:
+                conf_pct = int(item.confidence * 100)
+                yield (
+                    f"  - 「{item.key}」= **{item.value}**"
+                    f"  (第{item.source_page}页, 置信度:{conf_pct}%)\n"
+                )
+            yield "\n"
+
+            # Step 5
+            yield f"👁️ **Step 5/5: Critic VLM 视觉核验 (第{iteration}轮)**\n"
+            feedbacks = await self.critic_agent.verify(items, pages)
+            for fb in feedbacks:
+                if fb.verified:
+                    yield f"  ✅ 「{fb.key}」: 确认正确\n"
+                else:
+                    actual = fb.actual_value or "未知"
+                    yield f"  ❌ 「{fb.key}」: 图片显示为 **{actual}**，非提取值\n"
+            yield "\n"
+
+            failed = [fb for fb in feedbacks if not fb.verified]
+            verified_keys = {fb.key for fb in feedbacks if fb.verified}
+            for item in items:
+                if item.key in verified_keys:
+                    item.verified = True
+
+            if not failed:
+                converged = True
+                yield "🎉 **全部通过核验！**\n\n"
+                break
+            else:
+                yield f"🔄 有 **{len(failed)}** 个要素未通过，进入下一轮...\n\n"
+
+        result = ExtractionResult(
+            items=items,
+            total_iterations=iteration,
+            converged=converged,
+        )
+        yield self._format_result_markdown(result)
+
+    def _format_result_markdown(self, result: ExtractionResult) -> str:
+        lines = ["## 📋 最终提取结果\n"]
+        lines.append("| 要素 | 提取值 | 来源页 | 核验 |")
+        lines.append("|------|--------|--------|------|")
+        for item in result.items:
+            mark = "✅" if item.verified else "⚠️"
+            page = f"第{item.source_page}页" if item.source_page else "—"
+            lines.append(f"| {item.key} | {item.value or '未找到'} | {page} | {mark} |")
+        lines.append("")
+        lines.append(
+            f"> 共迭代 **{result.total_iterations}** 轮，"
+            f"{'已完全收敛' if result.converged else '达到最大迭代次数'}"
+        )
         return "\n".join(lines)
