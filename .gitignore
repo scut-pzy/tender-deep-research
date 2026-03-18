@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv/
+venv/
+
+# 运行时缓存（保留目录结构）
+cache/uploads/*
+cache/pages/*
+cache/vectors/*
+!cache/uploads/.gitkeep
+!cache/pages/.gitkeep
+!cache/vectors/.gitkeep
