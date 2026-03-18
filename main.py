@@ -5,7 +5,6 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import yaml
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,15 +22,14 @@ from models.schemas import (
     StreamChoice,
     Usage,
 )
+from utils.config_loader import load_config
 from utils.file_handler import download_file, save_upload_file
 from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ── 配置加载 ────────────────────────────────────────────────────────────────
-CFG_PATH = Path(__file__).parent / "config.yaml"
-with open(CFG_PATH, encoding="utf-8") as f:
-    CFG = yaml.safe_load(f)
+# ── 配置加载（自动展开 .env 中的环境变量）──────────────────────────────────
+CFG = load_config()
 
 # 确保缓存目录存在
 for key in ("upload_dir", "pages_dir", "vectors_dir"):
