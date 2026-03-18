@@ -1,0 +1,53 @@
+# ============================================
+# 模型配置
+# ============================================
+
+policy_llm:
+  # Qwen3-8B 文本模型
+  api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  api_key: "sk-your-dashscope-key"
+  model: "qwen3-8b"
+  temperature: 0.3
+  max_tokens: 4096
+
+critic_vlm:
+  # Qwen-VL 视觉模型
+  api_base: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  api_key: "sk-your-dashscope-key"
+  model: "qwen-vl-max"
+  temperature: 0.1
+  max_tokens: 2048
+
+embedding:
+  # DeepSeek Embedding
+  api_base: "https://api.deepseek.com/v1"
+  api_key: "sk-your-deepseek-key"
+  model: "deepseek-embedding"
+  dimensions: 1024
+
+# ============================================
+# RAG 配置
+# ============================================
+
+rag:
+  chunk_size: 800          # 每个文本块大小(字符)
+  chunk_overlap: 200       # 块之间重叠
+  top_k: 5                 # 每个要素检索top_k个块
+
+# ============================================
+# 流程配置
+# ============================================
+
+orchestrator:
+  max_iterations: 3        # 最大迭代次数
+  confidence_threshold: 0.8 # 置信度阈值
+
+# ============================================
+# 服务配置
+# ============================================
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  upload_dir: "./uploads"
+  cache_dir: "./cache"
