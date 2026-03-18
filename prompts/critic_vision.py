@@ -32,7 +32,9 @@ def build_batch_critic_prompt(page_num: int, items: list[dict]) -> str:
     lines.append(
         "\n请仔细查看图片，核验以上每条信息是否准确。"
         "特别注意数字、金额大小写、日期、百分比等容易出错的字段。"
-        "\n输出 JSON 数组，顺序与上方列表一致。"
+        '\n\n必须严格按以下 JSON 格式输出，字段名不能更改：\n'
+        '[{"key": "要素名称", "verified": true或false, "actual_value": "若错误填写实际值否则填null", "comment": "简短说明"}]'
+        "\n顺序与上方列表一致，直接输出 JSON，不要加其他文字。"
     )
     return "\n".join(lines)
 

@@ -9,7 +9,7 @@ from utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-_EMBED_BATCH = 32  # 每批向量化的文本块数
+_EMBED_BATCH = 10  # 每批向量化的文本块数（text-embedding-v4 限制最多10条/批）
 
 
 class RAGEngine:

@@ -40,11 +40,17 @@ class CriticAgent:
         for entry in raw_list:
             if not isinstance(entry, dict):
                 continue
+            # 兼容 VLM 可能返回中文字段名的情况
+            key = entry.get("key") or entry.get("要素") or entry.get("要素名称", "")
+            verified_raw = entry.get("verified") if "verified" in entry else entry.get("是否准确")
+            verified = bool(verified_raw) if verified_raw is not None else False
+            actual_value = entry.get("actual_value") or entry.get("实际值")
+            comment = entry.get("comment") or entry.get("说明") or entry.get("备注", "")
             feedbacks.append(CriticFeedback(
-                key=entry.get("key", ""),
-                verified=bool(entry.get("verified", False)),
-                actual_value=entry.get("actual_value"),
-                comment=entry.get("comment", ""),
+                key=key,
+                verified=verified,
+                actual_value=actual_value,
+                comment=comment,
             ))
         return feedbacks
 
