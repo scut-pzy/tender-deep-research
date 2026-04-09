@@ -4,7 +4,7 @@
 
 server:
   host: "0.0.0.0"
-  port: 8000
+  port: 7123
 
 # ============================================
 # 模型配置
@@ -35,17 +35,23 @@ embedding:
 # ============================================
 
 rag:
-  chunk_size: 512        # 每个文本块大小（字符）
-  chunk_overlap: 64      # 块间重叠字符数
-  top_k: 5               # 每个要素检索 top_k 个块
+  mode: "parent_child"      # "flat" = 扁平 RAG, "parent_child" = 父子分块检索
+  chunk_size: 512            # flat 模式：每个文本块大小（字符）
+  chunk_overlap: 64          # flat 模式：块间重叠字符数
+  parent_chunk_size: 1024    # parent_child 模式：父块大小
+  parent_chunk_overlap: 128  # parent_child 模式：父块重叠
+  child_chunk_size: 256      # parent_child 模式：子块大小
+  child_chunk_overlap: 64    # parent_child 模式：子块重叠
+  top_k: 5                   # 每个要素检索 top_k 个块
 
 # ============================================
 # 流程控制
 # ============================================
 
 pipeline:
-  max_iterations: 3         # 最大迭代轮次
+  max_iterations: 3         # 每个字段最大迭代轮数
   confidence_threshold: 0.8 # 置信度阈值，达到后提前停止
+  field_top_k: 5            # 单字段 RAG top-K
 
 # ============================================
 # 文件存储
@@ -55,4 +61,5 @@ files:
   upload_dir: "./cache/uploads"
   pages_dir: "./cache/pages"
   vectors_dir: "./cache/vectors"
+  history_dir: "./data/history"
   max_size_mb: 100

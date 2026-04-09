@@ -104,3 +104,34 @@ class ExtractionResult(BaseModel):
     items: list[ExtractionItem]
     total_iterations: int
     converged: bool
+
+
+# ── 合规核查类型 ───────────────────────────────────────────────────────────
+
+class ChecklistItem(BaseModel):
+    key: str
+    requirement: str
+    category: str = ""
+    source_page: Optional[int] = None
+    source_text: Optional[str] = None
+
+
+class ComplianceItem(BaseModel):
+    key: str
+    requirement: str
+    response: Optional[str] = None
+    verdict: str = "warn"  # pass / fail / warn
+    reason: str = ""
+    source_page: Optional[int] = None
+    source_text: Optional[str] = None
+
+
+class ChecklistRequest(BaseModel):
+    file_id: str
+    use_cache: bool = True
+
+
+class ComplianceCheckRequest(BaseModel):
+    file_id: str
+    checklist: list[ChecklistItem]
+    use_cache: bool = True

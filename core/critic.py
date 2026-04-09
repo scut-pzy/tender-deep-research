@@ -2,6 +2,7 @@
 import json
 import re
 from collections import defaultdict
+from typing import AsyncGenerator
 
 from core.llm_client import VLMClient
 from models.schemas import CriticFeedback, ExtractionItem
@@ -104,9 +105,10 @@ class CriticAgent:
                 for fb in feedbacks:
                     mark = "✅" if fb.verified else "❌"
                     logger.info(
-                        "%s 「%s」%s",
+                        "%s 「%s」 %s | %s",
                         mark, fb.key,
-                        f"→ 实际值: {fb.actual_value}" if not fb.verified else "",
+                        f"实际值: {fb.actual_value}" if fb.actual_value else "",
+                        fb.comment or "",
                     )
             except Exception as e:
                 logger.warning("第 %d 页 VLM 调用失败: %s", page_num, e)
@@ -116,3 +118,121 @@ class CriticAgent:
                     ))
 
         return all_feedbacks
+
+    async def verify_single(
+        self,
+        item: ExtractionItem,
+        pages_data: list[dict],
+        pages_to_check: list[int],
+        rag_context: str = "",
+    ) -> CriticFeedback:
+        """
+        对单个 ExtractionItem 在指定页码列表上逐页核验。
+        找到第一个 verified=True 即返回；全部失败返回最后一个反馈。
+        """
+        if item.source_page is None or item.value is None:
+            return CriticFeedback(
+                key=item.key,
+                verified=False,
+                comment="无来源页码或值为空，无法核验",
+            )
+
+        page_map: dict[int, str] = {p["page_num"]: p["image_base64"] for p in pages_data}
+        item_dict = {
+            "key": item.key,
+            "value": item.value,
+            "source_text": item.source_text or "",
+        }
+
+        last_fb = CriticFeedback(key=item.key, verified=False, comment="未能核验")
+        for page_num in pages_to_check:
+            if page_num not in page_map:
+                last_fb = CriticFeedback(
+                    key=item.key, verified=False, comment=f"第{page_num}页图片不存在"
+                )
+                continue
+
+            prompt = build_batch_critic_prompt(page_num, [item_dict], rag_context=rag_context)
+            try:
+                raw = await self.vlm.chat_with_image(
+                    text_prompt=prompt,
+                    image_base64_list=[page_map[page_num]],
+                )
+                fbs = self._parse_feedback(raw, [item_dict])
+                fb = fbs[0] if fbs else CriticFeedback(key=item.key, verified=False, comment="解析失败")
+                mark = "✅" if fb.verified else "❌"
+                logger.info(
+                    "%s 「%s」(第%d页) %s | %s",
+                    mark, fb.key, page_num,
+                    f"实际值: {fb.actual_value}" if fb.actual_value else "",
+                    fb.comment or "",
+                )
+                if fb.verified:
+                    return fb
+                last_fb = fb
+            except Exception as e:
+                logger.warning("第 %d 页 VLM 调用失败: %s", page_num, e)
+                last_fb = CriticFeedback(key=item.key, verified=False, comment=f"VLM调用失败: {e}")
+
+        return last_fb
+
+    async def verify_stream(
+        self, items: list[ExtractionItem], pages_data: list[dict]
+    ) -> AsyncGenerator[list[CriticFeedback], None]:
+        """
+        流式核验：每完成一页（或一批无法核验的要素）立即 yield。
+        每次 yield 一个 list[CriticFeedback]，调用方可逐个处理。
+        """
+        page_map: dict[int, str] = {p["page_num"]: p["image_base64"] for p in pages_data}
+
+        grouped: dict[int, list[dict]] = defaultdict(list)
+        unverifiable: list[CriticFeedback] = []
+
+        for item in items:
+            if item.source_page is None or item.value is None:
+                unverifiable.append(CriticFeedback(
+                    key=item.key,
+                    verified=False,
+                    comment="无来源页码或值为空，无法核验",
+                ))
+            else:
+                grouped[item.source_page].append({
+                    "key": item.key,
+                    "value": item.value,
+                    "source_text": item.source_text or "",
+                })
+
+        # Yield unverifiable items immediately
+        if unverifiable:
+            yield unverifiable
+
+        for page_num, page_items in grouped.items():
+            if page_num not in page_map:
+                fbs = [CriticFeedback(
+                    key=it["key"], verified=False, comment=f"第{page_num}页图片不存在"
+                ) for it in page_items]
+                yield fbs
+                continue
+
+            prompt = build_batch_critic_prompt(page_num, page_items)
+            try:
+                raw = await self.vlm.chat_with_image(
+                    text_prompt=prompt,
+                    image_base64_list=[page_map[page_num]],
+                )
+                feedbacks = self._parse_feedback(raw, page_items)
+                for fb in feedbacks:
+                    mark = "✅" if fb.verified else "❌"
+                    logger.info(
+                        "%s 「%s」 %s | %s",
+                        mark, fb.key,
+                        f"实际值: {fb.actual_value}" if fb.actual_value else "",
+                        fb.comment or "",
+                    )
+                yield feedbacks
+            except Exception as e:
+                logger.warning("第 %d 页 VLM 调用失败: %s", page_num, e)
+                fbs = [CriticFeedback(
+                    key=it["key"], verified=False, comment=f"VLM调用失败: {e}"
+                ) for it in page_items]
+                yield fbs

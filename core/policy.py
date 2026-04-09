@@ -1,11 +1,12 @@
 """Policy LLM 智能体：招标要素提取与迭代重写。"""
 import json
 import re
-from typing import Optional
+from typing import AsyncGenerator, Optional
 
 from core.llm_client import LLMClient
 from models.schemas import ExtractionItem
 from prompts.extract import build_extract_prompt
+from prompts.extract_single import build_extract_single_prompt
 from prompts.rewrite import build_rewrite_prompt
 from utils.logger import get_logger
 
@@ -41,15 +42,23 @@ class PolicyAgent:
 
         raw_items = data.get("items", data) if isinstance(data, dict) else data
         if not isinstance(raw_items, list):
-            return [ExtractionItem(key=k) for k in keys]
+            # 单对象返回（如单字段提取）：{"key": ..., "value": ...}
+            if isinstance(raw_items, dict) and "key" in raw_items:
+                raw_items = [raw_items]
+            else:
+                return [ExtractionItem(key=k) for k in keys]
 
         # 构建 key→item 映射
         item_map = {}
         for it in raw_items:
             if isinstance(it, dict) and "key" in it:
+                # LLM 有时将 value 返回为 dict/list，需转为字符串
+                raw_val = it.get("value")
+                if isinstance(raw_val, (dict, list)):
+                    raw_val = json.dumps(raw_val, ensure_ascii=False)
                 item_map[it["key"]] = ExtractionItem(
                     key=it["key"],
-                    value=it.get("value"),
+                    value=raw_val,
                     source_page=it.get("source_page"),
                     source_text=it.get("source_text"),
                     confidence=float(it.get("confidence", 0.5)),
@@ -71,6 +80,58 @@ class PolicyAgent:
                 item.key, item.value, item.source_page, item.confidence,
             )
         return items
+
+    async def extract_single(
+        self,
+        key: str,
+        hits: list[dict],
+        prev_item: ExtractionItem | None = None,
+        feedback=None,
+    ) -> ExtractionItem:
+        """单字段提取，可选带上轮结果和 Critic 反馈。"""
+        prev_dict = prev_item.model_dump() if prev_item else None
+        fb_dict = feedback.model_dump() if feedback else None
+        messages = build_extract_single_prompt(key, hits, prev_dict, fb_dict)
+        raw = await self.llm.chat(messages, json_mode=True)
+        items = self._parse_response(raw, [key])
+        item = items[0]
+        logger.info(
+            "提取「%s」= %s (第%s页, conf=%.2f)",
+            item.key, item.value, item.source_page, item.confidence,
+        )
+        return item
+
+    async def extract_single_stream(
+        self,
+        key: str,
+        hits: list[dict],
+        prev_item: ExtractionItem | None = None,
+        feedback=None,
+    ) -> AsyncGenerator[tuple[str, str | ExtractionItem], None]:
+        """
+        流式单字段提取。
+        yield ("thinking", text) — LLM 思考过程 token
+        yield ("result", ExtractionItem) — 最终提取结果
+        """
+        prev_dict = prev_item.model_dump() if prev_item else None
+        fb_dict = feedback.model_dump() if feedback else None
+        messages = build_extract_single_prompt(key, hits, prev_dict, fb_dict)
+
+        content_buf: list[str] = []
+        async for tag, text in self.llm.chat_stream(messages, json_mode=True):
+            if tag == "reasoning":
+                yield ("thinking", text)
+            elif tag == "content":
+                content_buf.append(text)
+
+        raw = "".join(content_buf)
+        items = self._parse_response(raw, [key])
+        item = items[0]
+        logger.info(
+            "提取「%s」= %s (第%s页, conf=%.2f)",
+            item.key, item.value, item.source_page, item.confidence,
+        )
+        yield ("result", item)
 
     async def rewrite(
         self,

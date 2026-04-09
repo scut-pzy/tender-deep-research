@@ -1,0 +1,415 @@
+/* ── Sidebar collapse ─────────────────────────────────────────────────── */
+#sidebar.collapsed {
+  width: 0 !important;
+  min-width: 0 !important;
+  border-right: none !important;
+  padding: 0 !important;
+  overflow: hidden;
+}
+
+#sidebar.collapsed > * {
+  display: none;
+}
+
+/* ── Process visibility toggle ───────────────────────────────────────── */
+#sidebar-scroll.process-hidden .round-section,
+#sidebar-scroll.process-hidden #prep-section {
+  display: none;
+}
+
+/* ── Round sections ──────────────────────────────────────────────────── */
+.round-section {
+  animation: slideInUp 0.35s ease-out;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.round-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  padding: 10px 14px;
+  transition: background 0.15s;
+  user-select: none;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.round-header:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.round-header .round-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #cbd5e1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.round-header .round-badge {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.round-badge.in-progress {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+}
+
+.round-badge.all-pass {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+}
+
+.round-badge.has-fail {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+}
+
+.round-header .round-chevron {
+  transition: transform 0.2s ease;
+  color: #475569;
+}
+
+.round-header .round-chevron.collapsed {
+  transform: rotate(-90deg);
+}
+
+.round-body {
+  overflow: hidden;
+  transition: max-height 0.3s ease, opacity 0.3s ease;
+  max-height: 3000px;
+  opacity: 1;
+  padding: 4px 0;
+}
+
+.round-body.collapsed {
+  max-height: 0;
+  opacity: 0;
+  padding: 0;
+}
+
+/* ── Block label (shared) ────────────────────────────────────────────── */
+.block-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 6px 12px 4px;
+  margin-bottom: 2px;
+}
+
+.block-label svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.block-label.policy-label {
+  color: #60a5fa;
+}
+
+.block-label.critic-label {
+  color: #a78bfa;
+}
+
+/* ── Policy block ────────────────────────────────────────────────────── */
+.policy-block {
+  margin: 4px 8px;
+  border-left: 3px solid rgba(59, 130, 246, 0.6);
+  border-radius: 0 8px 8px 0;
+  background: rgba(59, 130, 246, 0.03);
+  padding: 2px 0 6px 0;
+}
+
+.policy-block:empty {
+  display: none;
+}
+
+.policy-block .block-label {
+  padding-left: 10px;
+}
+
+/* ── Policy field item (structured card) ─────────────────────────────── */
+.policy-field-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  margin: 3px 8px;
+  background: rgba(59, 130, 246, 0.05);
+  border-radius: 6px;
+  animation: fadeIn 0.25s ease-out;
+}
+
+.policy-field-item .field-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: #60a5fa;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.policy-field-item .field-value {
+  font-size: 12px;
+  color: #e2e8f0;
+  flex: 1;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.policy-field-item .field-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.policy-field-item .field-page {
+  font-size: 10px;
+  color: #64748b;
+}
+
+.policy-field-item .field-conf {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.field-conf.high {
+  background: rgba(34, 197, 94, 0.12);
+  color: #4ade80;
+}
+
+.field-conf.medium {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+}
+
+.field-conf.low {
+  background: rgba(239, 68, 68, 0.12);
+  color: #f87171;
+}
+
+/* Policy step title */
+.policy-block .step-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #60a5fa;
+  padding: 4px 10px 2px;
+}
+
+/* Policy plain text fallback */
+.policy-block .detail-line {
+  font-size: 11px;
+  color: #94a3b8;
+  padding: 1px 10px;
+  line-height: 1.6;
+}
+
+/* ── Critic block ────────────────────────────────────────────────────── */
+.critic-block {
+  margin: 4px 8px;
+  border-left: 3px solid rgba(139, 92, 246, 0.6);
+  border-radius: 0 8px 8px 0;
+  background: rgba(139, 92, 246, 0.03);
+  padding: 2px 0 6px 0;
+}
+
+.critic-block:empty {
+  display: none;
+}
+
+.critic-block .block-label {
+  padding-left: 10px;
+}
+
+/* Critic step title */
+.critic-block .step-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #a78bfa;
+  padding: 4px 10px 2px;
+}
+
+.critic-block .detail-line {
+  font-size: 11px;
+  color: #94a3b8;
+  padding: 1px 10px;
+  line-height: 1.6;
+}
+
+/* ── Critic result items (pass / fail rows) ──────────────────────────── */
+.critic-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  margin: 3px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  animation: fadeIn 0.25s ease-out;
+}
+
+.critic-item.pass-row {
+  background: rgba(34, 197, 94, 0.06);
+  border-left: 2px solid rgba(34, 197, 94, 0.4);
+}
+
+.critic-item.fail-row {
+  background: rgba(239, 68, 68, 0.06);
+  border-left: 2px solid rgba(239, 68, 68, 0.4);
+}
+
+.critic-icon {
+  flex-shrink: 0;
+  font-size: 13px;
+}
+
+.critic-icon.pass { color: #22c55e; }
+.critic-icon.fail { color: #ef4444; }
+
+.critic-key {
+  font-weight: 600;
+  color: #e2e8f0;
+  font-size: 11px;
+}
+
+.critic-detail {
+  color: #94a3b8;
+  font-size: 11px;
+  flex: 1;
+}
+
+/* ── Rewrite feedback block (amber accent) ───────────────────────────── */
+.rewrite-block {
+  margin: 4px 8px;
+  border-left: 3px solid rgba(245, 158, 11, 0.6);
+  border-radius: 0 8px 8px 0;
+  background: rgba(245, 158, 11, 0.04);
+  padding: 6px 0 6px 0;
+}
+
+.rewrite-block .rewrite-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f59e0b;
+  padding: 2px 10px 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.rewrite-block .rewrite-header svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Rewrite field item */
+.rewrite-field-item {
+  padding: 4px 10px;
+  margin: 2px 8px;
+  background: rgba(245, 158, 11, 0.06);
+  border-radius: 5px;
+  font-size: 11px;
+  animation: fadeIn 0.25s ease-out;
+}
+
+.rewrite-field-item .rw-key {
+  font-weight: 600;
+  color: #fbbf24;
+}
+
+.rewrite-field-item .rw-value {
+  color: #d4a574;
+}
+
+.rewrite-block .detail-line {
+  font-size: 11px;
+  color: #d4a574;
+  padding: 1px 10px;
+  line-height: 1.6;
+}
+
+/* ── Prep section ────────────────────────────────────────────────────── */
+#prep-section {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  padding: 8px 4px;
+}
+
+#prep-content .detail-line {
+  font-size: 11px;
+  color: #94a3b8;
+  padding: 1px 10px;
+  line-height: 1.6;
+}
+
+/* ── Sidebar placeholder ─────────────────────────────────────────────── */
+.sidebar-placeholder {
+  color: #475569;
+  font-size: 12px;
+  text-align: center;
+  padding: 40px 16px;
+  font-style: italic;
+}
+
+/* ── Light theme overrides ───────────────────────────────────────────── */
+html:not(.dark) .round-section {
+  background: #ffffff;
+  border-color: var(--border);
+}
+
+html:not(.dark) .round-header {
+  background: #f8fafc;
+  border-bottom-color: var(--border);
+}
+
+html:not(.dark) .round-header:hover { background: #f1f5f9; }
+
+html:not(.dark) .round-header .round-title { color: var(--text-primary); }
+
+html:not(.dark) .policy-block {
+  background: rgba(59, 130, 246, 0.04);
+}
+
+html:not(.dark) .policy-block .detail-line { color: var(--text-secondary); }
+
+html:not(.dark) .policy-field-item {
+  background: rgba(59, 130, 246, 0.06);
+}
+
+html:not(.dark) .policy-field-item .field-value { color: var(--text-primary); }
+
+html:not(.dark) .critic-block {
+  background: rgba(139, 92, 246, 0.04);
+}
+
+html:not(.dark) .critic-block .detail-line { color: var(--text-secondary); }
+
+html:not(.dark) .critic-key { color: var(--text-primary); }
+html:not(.dark) .critic-detail { color: var(--text-secondary); }
+
+html:not(.dark) #prep-section {
+  background: #ffffff;
+  border-color: var(--border);
+}
+
+html:not(.dark) #prep-content .detail-line { color: var(--text-secondary); }
