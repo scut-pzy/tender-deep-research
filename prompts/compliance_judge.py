@@ -6,9 +6,12 @@ def build_single_compliance_prompt(
     tender_requirement: str,
     bid_response: str,
     bid_hits: list[dict],
+    additional_context: str | None = None,
 ) -> list[dict]:
     """
     单字段合规判定 prompt：已知招标要求和投标书提取值，判断是否合规。
+
+    additional_context: 可选的人工补充信息，将作为高优先级的判定依据。
     """
     system = """\
 你是一名专业的招投标合规性审查专家。
@@ -26,6 +29,13 @@ def build_single_compliance_prompt(
         f"[第{h['page_num']}页] {h['text']}" for h in (bid_hits or [])[:3]
     )
 
+    extra_block = ""
+    if additional_context and additional_context.strip():
+        extra_block = (
+            "\n## 人工补充信息（高优先级，请结合此信息重新判定）：\n"
+            f"{additional_context.strip()}\n"
+        )
+
     user = f"""## 要素：{key}
 
 ## 招标书要求：
@@ -36,8 +46,72 @@ def build_single_compliance_prompt(
 
 ## 投标书原文片段（RAG 参考）：
 {rag_text or "（无 RAG 内容）"}
-
+{extra_block}
 请判定投标书是否满足招标要求，输出 JSON。"""
+
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
+def build_reeval_reasoning_prompt(
+    key: str,
+    tender_requirement: str,
+    bid_response: str,
+    current_verdict: str,
+    current_reason: str,
+    bid_hits: list[dict],
+    additional_context: str,
+) -> list[dict]:
+    """
+    带人工补充信息的"再核查"prompt：输出 Markdown 分析 + 最终 JSON 代码块。
+    用于流式场景（前端边看推理边等结果）。
+    """
+    system = """\
+你是一名专业的招投标合规性审查专家。
+用户已经生成了一份初步的合规判定，但现在提供了额外的补充信息，需要你结合原有信息与用户补充重新评估。
+
+## 判定规则
+- pass（合规）
+- fail（不合规）
+- warn（需人工确认）
+
+## 输出要求
+1. 先用 Markdown 简要说明你的分析过程（不超过 200 字）
+2. 最后输出一个 ```json``` 代码块，格式：
+```json
+{"verdict": "pass|fail|warn", "reason": "简明的判定依据（80字内）", "response": "（可选）更新后的投标响应摘要"}
+```
+response 字段仅在用户补充信息改变了对投标响应的理解时才填写，否则可省略。"""
+
+    rag_text = "\n".join(
+        f"[第{h['page_num']}页] {h['text']}" for h in (bid_hits or [])[:3]
+    )
+
+    verdict_label = {"pass": "✅ 合规", "fail": "❌ 不合规", "warn": "⚠️ 需确认"}.get(
+        current_verdict, current_verdict
+    )
+
+    user = f"""## 要素：{key}
+
+## 招标书要求：
+{tender_requirement}
+
+## 投标书响应（已从投标书提取）：
+{bid_response}
+
+## 当前判定：
+{verdict_label}
+理由：{current_reason}
+
+## 投标书原文片段（RAG 参考）：
+{rag_text or "（无 RAG 内容）"}
+
+## 用户补充信息（关键，请优先参考）：
+{additional_context.strip()}
+
+请重新评估该字段是否合规，先输出分析过程，最后在 json 代码块中给出新判定。"""
 
     return [
         {"role": "system", "content": system},

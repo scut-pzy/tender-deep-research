@@ -4,10 +4,10 @@
 
 | 项目 | 要求 |
 |------|------|
-| 操作系统 | Linux（Ubuntu 20.04+ 推荐）|
-| Python | 3.10+ |
-| 包管理 | Conda |
-| 网络 | 可访问 `dashscope.aliyuncs.com` |
+| 操作系统 | Linux（Ubuntu 20.04+ 推荐）或 macOS |
+| Python | **3.10+**（代码使用 `X \| Y` 联合类型注解，低于 3.10 会报语法错误）|
+| 包管理 | Conda（推荐，faiss-cpu 通过 conda 安装更稳定）|
+| 网络 | 可访问 `dashscope.aliyuncs.com`（境外服务器见"常见问题"中的代理配置）|
 
 ---
 
@@ -45,11 +45,17 @@ conda activate tender
 # 2. 进入项目目录
 cd /path/to/tender-deep-research
 
-# 3. 安装 Python 依赖
+# 3. 安装 faiss-cpu（requirements.txt 中已注释，需单独安装）
+#    推荐通过 conda-forge 安装，在 Linux / macOS / ARM 平台均兼容：
+conda install -c conda-forge faiss-cpu -y
+#    如果不使用 conda，也可以直接 pip 安装（部分 ARM 平台可能失败）：
+#    pip install faiss-cpu
+
+# 4. 安装其余 Python 依赖
 pip install -r requirements.txt
 ```
 
-> `requirements.txt` 已锁定版本，直接 pip install 即可，无需额外 conda install。
+> `requirements.txt` 已锁定版本。faiss-cpu 之所以注释掉，是因为 conda-forge 版本比 PyPI 版本在各平台兼容性更好，需要单独用 conda 安装。
 
 ---
 
@@ -225,3 +231,18 @@ A: 正常现象，同一 PDF 第二次运行会命中 `cache/vectors/` 缓存，
 
 **Q: 多用户并发时响应变慢**  
 A: 模型 API 为外部调用，瓶颈在网络和 LLM 推理，调大 `field_top_k` 可减少 RAG 轮数
+
+**Q: 境外服务器无法访问 dashscope.aliyuncs.com**  
+A: 系统所有 LLM/Embedding 调用均走 `httpx`，在 `.env` 中设置代理即可：
+```bash
+# 追加到 .env 文件
+HTTP_PROXY=http://your-proxy:port
+HTTPS_PROXY=http://your-proxy:port
+```
+下载远程 PDF（`file_url` 参数）同样经过 `httpx`，会自动使用上述代理设置。
+
+**Q: ARM / Apple Silicon（M 系列芯片）上 faiss-cpu 安装失败**  
+A: 不要使用 `pip install faiss-cpu`，改用 conda-forge：
+```bash
+conda install -c conda-forge faiss-cpu -y
+```

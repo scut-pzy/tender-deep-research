@@ -13,7 +13,12 @@ from core.policy import PolicyAgent
 from core.rag import RAGEngine, ParentChildRAGEngine
 from models.schemas import ChecklistItem, CriticFeedback, ExtractionItem, ExtractionResult
 from prompts.checklist import build_checklist_prompt
-from prompts.compliance_judge import build_compliance_prompt, build_single_compliance_prompt
+from prompts.compliance_judge import (
+    build_compliance_prompt,
+    build_reeval_reasoning_prompt,
+    build_single_compliance_prompt,
+)
+from prompts.chat_qa import build_chat_qa_prompt
 from prompts.refine_query import build_refine_query_prompt
 from utils.file_handler import download_file
 from utils.logger import get_logger
@@ -64,11 +69,15 @@ class Orchestrator:
         return hashlib.md5(raw.encode()).hexdigest()[:12]
 
     async def _build_rag(
-        self, pages: list[dict], pdf_path: str, use_cache: bool
+        self, pages: list[dict], pdf_path: str, use_cache: bool,
+        on_progress=None,
     ) -> tuple[RAGEngine | ParentChildRAGEngine, bool]:
         """
         构建或加载 RAG 索引。根据 rag.mode 选择扁平或父子检索。
         返回 (rag_engine, from_cache)。
+
+        Args:
+            on_progress: 可选回调 (done, total) -> None，embedding 每批完成后调用。
         """
         vectors_dir = self.cfg["files"]["vectors_dir"]
         mode = self.rag_cfg.get("mode", "flat")
@@ -85,7 +94,7 @@ class Orchestrator:
                 child_chunk_size=self.rag_cfg.get("child_chunk_size", 256),
                 child_chunk_overlap=self.rag_cfg.get("child_chunk_overlap", 64),
             )
-            await rag.build_index(parent_chunks, child_chunks)
+            await rag.build_index(parent_chunks, child_chunks, on_progress)
             rag.save(vectors_dir, key)
             return rag, False
         else:
@@ -97,9 +106,40 @@ class Orchestrator:
                 self.rag_cfg["chunk_size"],
                 self.rag_cfg["chunk_overlap"],
             )
-            await rag.build_index(chunks)
+            await rag.build_index(chunks, on_progress)
             rag.save(vectors_dir, key)
             return rag, False
+
+    async def _build_rag_with_progress(
+        self, pages: list[dict], pdf_path: str, use_cache: bool
+    ) -> AsyncGenerator[str | tuple, None]:
+        """构建 RAG 索引并以 yield 输出进度行。
+
+        yield str  → 进度文本（⏳ Embedding 进度：...）
+        最后一个 yield 是 tuple (rag, from_cache)。
+        """
+        progress_q: asyncio.Queue[tuple[int, int] | None] = asyncio.Queue()
+
+        def _on_progress(done: int, total: int):
+            progress_q.put_nowait((done, total))
+
+        build_task = asyncio.create_task(
+            self._build_rag(pages, pdf_path, use_cache, on_progress=_on_progress)
+        )
+        build_task.add_done_callback(lambda _: progress_q.put_nowait(None))
+
+        last_pct = -1
+        while True:
+            item = await progress_q.get()
+            if item is None:
+                break
+            done, total_chunks = item
+            pct = int(done / total_chunks * 100) if total_chunks else 100
+            if pct != last_pct:
+                last_pct = pct
+                yield f"  ⏳ Embedding 进度：{done}/{total_chunks}（{pct}%）\n"
+
+        yield build_task.result()  # (rag, from_cache)
 
     # ──────────────────────────────────────────────────────────────────────
     # 输入解析
@@ -233,6 +273,18 @@ class Orchestrator:
     async def run_stream(
         self, keys: list[str], pdf_path: str, use_cache: bool = True
     ) -> AsyncGenerator[str, None]:
+        """
+        流式信息提取主流程，逐字段处理并实时 yield 进度文本。
+
+        与非流式的 run() 不同，此方法每个字段独立执行三轮精炼，而非批量处理所有字段：
+        - 轮1：对 source_page 做 Critic 核验（最快路径，大多数字段在此收敛）
+        - 轮2：扩展到 RAG top-K 涉及的全部页面核验。
+                若轮2页面命中（值在文档中存在）但轮1已记录值错误，
+                说明 Policy 提了错误值而非检索偏差，此时回传轮1反馈给 Policy 重写。
+        - 轮3：让 LLM 生成新的 RAG 检索词再次检索，解决语义检索本身偏差的情况。
+
+        每次 yield 一段 Markdown 格式的进度文本，最后 yield 一个 JSON code block 作为最终结果。
+        """
         yield "🔍 开始分析投标文件...\n\n"
 
         # Step 1: 文档预处理
@@ -246,7 +298,14 @@ class Orchestrator:
         rag_mode = self.rag_cfg.get("mode", "flat")
         mode_label = "父子分块检索" if rag_mode == "parent_child" else "扁平向量检索"
         yield f"🧮 **Step 2/3: 构建检索索引（{mode_label}）**\n"
-        rag, from_cache = await self._build_rag(pages, pdf_path, use_cache)
+
+        rag = from_cache = None
+        async for item in self._build_rag_with_progress(pages, pdf_path, use_cache):
+            if isinstance(item, str):
+                yield item
+            else:
+                rag, from_cache = item
+
         if rag_mode == "parent_child":
             ntotal = rag.child_index.ntotal if rag.child_index else 0
         else:
@@ -316,7 +375,9 @@ class Orchestrator:
                 yield f"  → Critic 扩展核验 RAG 相关页 {extended_pages}...\n"
                 fb = await self.critic_agent.verify_single(item, pages, extended_pages, rag_context=_format_rag_context(hits))
                 if fb.verified:
-                    # 轮2页面匹配通过，但轮1发现问题 → 回传轮1反馈给 Policy 重新生成
+                    # 轮2在扩展页发现了值的存在，说明文档中确实有该信息（检索没问题），
+                    # 但轮1的 Critic 在 source_page 上发现值有误（Policy 提取了错误的值）。
+                    # 所以策略是：用轮1的精确反馈（fb_r1）来纠正 Policy，而不是仅靠轮2的泛化通过。
                     yield f"  → 轮2页面匹配，回传轮1反馈给 Policy 重新生成...\n"
                     has_thinking_r2 = False
                     async for tag, payload in self.policy_agent.extract_single_stream(
@@ -427,6 +488,35 @@ class Orchestrator:
         yield self._format_result_json(result)
 
     # ──────────────────────────────────────────────────────────────────────
+    # 自由对话 — 基于文档 RAG + 已有分析结果
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def chat_stream(
+        self,
+        question: str,
+        pdf_path: str,
+        context_data: dict | None = None,
+        use_cache: bool = True,
+    ) -> AsyncGenerator[str, None]:
+        """基于文档的自由问答，流式返回 LLM 生成的 token。"""
+        # 1. 文档预处理（利用页面缓存）
+        pages_data_obj = process_pdf(pdf_path, self.pages_dir)
+        pages = pages_data_obj["pages"]
+
+        # 2. 构建/加载 RAG 索引
+        rag, _ = await self._build_rag(pages, pdf_path, use_cache)
+
+        # 3. RAG 检索
+        hits = await rag.search(question, top_k=self.field_top_k)
+        rag_context = _format_rag_context(hits)
+
+        # 4. 构建 prompt 并流式生成
+        messages = build_chat_qa_prompt(question, rag_context, context_data)
+        async for tag, text in self.policy_llm.chat_stream(messages):
+            if tag == "content":
+                yield text
+
+    # ──────────────────────────────────────────────────────────────────────
     # 合规核查 — Step 1: 从招标书生成审查清单
     # ──────────────────────────────────────────────────────────────────────
 
@@ -447,7 +537,12 @@ class Orchestrator:
         rag_mode = self.rag_cfg.get("mode", "flat")
         mode_label = "父子分块检索" if rag_mode == "parent_child" else "扁平向量检索"
         yield f"🧮 **Step 2/3: 构建检索索引（{mode_label}）**\n"
-        rag, from_cache = await self._build_rag(pages, pdf_path, use_cache)
+        rag = from_cache = None
+        async for item in self._build_rag_with_progress(pages, pdf_path, use_cache):
+            if isinstance(item, str):
+                yield item
+            else:
+                rag, from_cache = item
         if from_cache:
             yield "  ⚡ 命中缓存\n\n"
         else:
@@ -513,7 +608,12 @@ class Orchestrator:
         rag_mode = self.rag_cfg.get("mode", "flat")
         mode_label = "父子分块检索" if rag_mode == "parent_child" else "扁平向量检索"
         yield f"🧮 **Step 2/3: 构建检索索引（{mode_label}）**\n"
-        rag, from_cache = await self._build_rag(pages, pdf_path, use_cache)
+        rag = from_cache = None
+        async for item in self._build_rag_with_progress(pages, pdf_path, use_cache):
+            if isinstance(item, str):
+                yield item
+            else:
+                rag, from_cache = item
         if rag_mode == "parent_child":
             ntotal = rag.child_index.ntotal if rag.child_index else 0
         else:
@@ -710,6 +810,55 @@ class Orchestrator:
         yield f"📊 核查完成：**{pass_count}** 合规 / **{fail_count}** 不合规 / **{warn_count}** 需确认\n\n"
 
         yield "## 📋 合规核查报告\n```json\n" + json.dumps({"items": result_items}, ensure_ascii=False, indent=2) + "\n```\n"
+
+    # ──────────────────────────────────────────────────────────────────────
+    # 合规核查 — 单字段再评估（带人工补充信息）
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def reevaluate_compliance_field_stream(
+        self,
+        pdf_path: str,
+        field_key: str,
+        requirement: str,
+        current_response: str,
+        current_verdict: str,
+        current_reason: str,
+        additional_context: str,
+        use_cache: bool = True,
+    ) -> AsyncGenerator[str, None]:
+        """结合用户补充信息，对单个合规字段重新判定。
+
+        流式输出分析过程 + 最终 ```json``` 代码块（前端解析 JSON 更新卡片）。
+        """
+        yield f"🔎 正在重新核查「{field_key}」\n\n"
+
+        # 1) PDF + RAG
+        pages_data_obj = process_pdf(pdf_path, self.pages_dir)
+        pages = pages_data_obj["pages"]
+
+        rag = from_cache = None
+        async for item in self._build_rag_with_progress(pages, pdf_path, use_cache):
+            if isinstance(item, str):
+                yield item
+            else:
+                rag, from_cache = item
+
+        # 2) RAG 检索该字段
+        hits = await rag.search(field_key, top_k=self.field_top_k)
+
+        # 3) 构建 prompt 并流式输出
+        messages = build_reeval_reasoning_prompt(
+            key=field_key,
+            tender_requirement=requirement,
+            bid_response=current_response,
+            current_verdict=current_verdict,
+            current_reason=current_reason,
+            bid_hits=hits,
+            additional_context=additional_context,
+        )
+        async for tag, text in self.policy_llm.chat_stream(messages):
+            if tag == "content":
+                yield text
 
     def _format_result_json(self, result: ExtractionResult) -> str:
         data = {}

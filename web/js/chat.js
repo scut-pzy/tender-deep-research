@@ -54,6 +54,7 @@ export function createAiMessage() {
 
   let typingRemoved = false;
   let statusArea = null;
+  let progressBar = null;
   let tableWrapper = null;
   let tableBody = null;
   let summaryArea = null;
@@ -156,6 +157,41 @@ export function createAiMessage() {
 
   return {
     element: div,
+
+    /** Update or create the embedding progress bar */
+    updateProgress(done, total, pct) {
+      const area = getStatusArea();
+      if (!progressBar) {
+        progressBar = document.createElement('div');
+        progressBar.className = 'embed-progress';
+        progressBar.innerHTML = `
+          <div class="embed-progress-label">
+            <span class="embed-progress-text">Embedding</span>
+            <span class="embed-progress-pct">0%</span>
+          </div>
+          <div class="embed-progress-track">
+            <div class="embed-progress-fill"></div>
+          </div>
+          <div class="embed-progress-detail"></div>
+        `;
+        area.appendChild(progressBar);
+      }
+      progressBar.querySelector('.embed-progress-pct').textContent = `${pct}%`;
+      progressBar.querySelector('.embed-progress-fill').style.width = `${pct}%`;
+      progressBar.querySelector('.embed-progress-detail').textContent = `${done} / ${total} 文本块`;
+      if (pct >= 100) {
+        progressBar.classList.add('done');
+      }
+      scrollToBottom();
+    },
+
+    /** Remove the progress bar (called when index build is done) */
+    removeProgress() {
+      if (progressBar) {
+        progressBar.remove();
+        progressBar = null;
+      }
+    },
 
     /** Append a status line */
     appendStatus(text) {
@@ -379,14 +415,20 @@ export function createComplianceMessage(items) {
     warn: { icon: '⚠️', label: '需确认', cls: 'cr-warn' },
   };
 
-  let cardsHtml = items.map(item => {
+  let cardsHtml = items.map((item, idx) => {
     const cfg = verdictConfig[item.verdict] || verdictConfig.warn;
     const page = item.source_page ? `第${item.source_page}页` : '—';
+    const editedBadge = item.humanEdited
+      ? `<span class="cr-edited-badge" title="已人工审核">✍️ 已人工审核</span>`
+      : '';
     return `
-      <div class="cr-card ${cfg.cls}">
+      <div class="cr-card ${cfg.cls}" data-idx="${idx}">
         <div class="cr-card-header">
           <span class="cr-key">${escapeHtml(item.key || '')}</span>
-          <span class="cr-badge ${cfg.cls}">${cfg.icon} ${cfg.label}</span>
+          <div class="cr-head-right">
+            ${editedBadge}
+            <span class="cr-badge ${cfg.cls}">${cfg.icon} ${cfg.label}</span>
+          </div>
         </div>
         <div class="cr-row">
           <span class="cr-label">招标要求</span>
@@ -394,7 +436,7 @@ export function createComplianceMessage(items) {
         </div>
         <div class="cr-row">
           <span class="cr-label">投标响应</span>
-          <span class="cr-value">${escapeHtml(item.response || '未找到')}</span>
+          <span class="cr-value cr-response">${escapeHtml(item.response || '未找到')}</span>
         </div>
         <div class="cr-row">
           <span class="cr-label">判定依据</span>
@@ -403,6 +445,10 @@ export function createComplianceMessage(items) {
         <div class="cr-footer">
           <span class="cr-page">来源：${page}</span>
           ${item.source_text ? `<span class="cr-source">${escapeHtml(item.source_text.slice(0, 60))}${item.source_text.length > 60 ? '…' : ''}</span>` : ''}
+          <div class="cr-card-actions">
+            <button class="cr-card-btn cr-edit-btn" data-idx="${idx}" title="人工编辑">✏️ 编辑</button>
+            <button class="cr-card-btn cr-reeval-btn" data-idx="${idx}" title="对话补充重核">💬 对话重核</button>
+          </div>
         </div>
       </div>`;
   }).join('');
@@ -523,6 +569,83 @@ export function createComplianceMessage(items) {
     win.focus();
     setTimeout(() => win.print(), 400);
   });
+
+  // ── Per-card edit buttons ──────────────────────────────────────────
+  panel.querySelectorAll('.cr-edit-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.idx);
+      _enterComplianceCardEditMode(panel, items, idx);
+    });
+  });
+
+  // ── Per-card reeval buttons (dispatch custom event to app.js) ──────
+  panel.querySelectorAll('.cr-reeval-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.idx);
+      const item = items[idx];
+      if (!item) return;
+      document.dispatchEvent(new CustomEvent('compliance:focus-field', {
+        detail: { idx, item },
+      }));
+    });
+  });
+}
+
+/**
+ * Replace a card's row content with editable inputs (verdict dropdown + textareas).
+ */
+function _enterComplianceCardEditMode(panel, items, idx) {
+  const card = panel.querySelector(`.cr-card[data-idx="${idx}"]`);
+  if (!card) return;
+  const item = items[idx];
+  card.innerHTML = `
+    <div class="cr-card-header">
+      <span class="cr-key">${escapeHtml(item.key || '')}</span>
+      <select class="cr-edit-verdict">
+        <option value="pass" ${item.verdict === 'pass' ? 'selected' : ''}>✅ 合规</option>
+        <option value="fail" ${item.verdict === 'fail' ? 'selected' : ''}>❌ 不合规</option>
+        <option value="warn" ${item.verdict === 'warn' ? 'selected' : ''}>⚠️ 需确认</option>
+      </select>
+    </div>
+    <div class="cr-row">
+      <span class="cr-label">招标要求</span>
+      <span class="cr-value cr-req">${escapeHtml(item.requirement || '—')}</span>
+    </div>
+    <div class="cr-row cr-edit-row">
+      <span class="cr-label">投标响应</span>
+      <textarea class="cr-edit-response" rows="2">${escapeHtml(item.response || '')}</textarea>
+    </div>
+    <div class="cr-row cr-edit-row">
+      <span class="cr-label">判定依据</span>
+      <textarea class="cr-edit-reason" rows="3">${escapeHtml(item.reason || '')}</textarea>
+    </div>
+    <div class="cr-edit-actions">
+      <button class="cr-card-btn cr-save-btn">💾 保存</button>
+      <button class="cr-card-btn cr-cancel-btn">取消</button>
+    </div>
+  `;
+  card.querySelector('.cr-save-btn').addEventListener('click', () => {
+    items[idx] = {
+      ...item,
+      verdict: card.querySelector('.cr-edit-verdict').value,
+      response: card.querySelector('.cr-edit-response').value.trim(),
+      reason: card.querySelector('.cr-edit-reason').value.trim(),
+      humanEdited: true,
+    };
+    createComplianceMessage(items); // re-render full panel
+  });
+  card.querySelector('.cr-cancel-btn').addEventListener('click', () => {
+    createComplianceMessage(items); // re-render to revert
+  });
+}
+
+/**
+ * Apply an updated item (e.g. from reevaluate) into the compliance list in place.
+ */
+export function applyComplianceUpdate(items, idx, patch) {
+  if (idx < 0 || idx >= items.length) return;
+  items[idx] = { ...items[idx], ...patch, humanEdited: true };
+  createComplianceMessage(items);
 }
 
 /**
@@ -530,6 +653,14 @@ export function createComplianceMessage(items) {
  */
 export function addErrorMessage(text) {
   removeWelcome();
+  let safe;
+  if (typeof text === 'string') {
+    safe = text;
+  } else if (text && typeof text === 'object') {
+    safe = text.message || text.detail || text.error || JSON.stringify(text);
+  } else {
+    safe = String(text ?? '未知错误');
+  }
   const div = document.createElement('div');
   div.className = 'message ai';
   div.innerHTML = `<span class="text-red-400 flex items-center gap-2">
@@ -537,10 +668,83 @@ export function addErrorMessage(text) {
       <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/>
       <line x1="9" y1="9" x2="15" y2="15"/>
     </svg>
-    ${escapeHtml(text)}
+    ${escapeHtml(safe)}
   </span>`;
   messagesEl.appendChild(div);
   scrollToBottom();
+}
+
+/**
+ * Add a plain text user message bubble (for chat mode).
+ */
+export function addChatUserMessage(text) {
+  removeWelcome();
+  const div = document.createElement('div');
+  div.className = 'message user';
+  div.innerHTML = `<div class="msg-text">${escapeHtml(text)}</div>`;
+  messagesEl.appendChild(div);
+  scrollToBottom();
+}
+
+/**
+ * Create a simple AI chat message that accumulates markdown.
+ */
+export function createChatAiMessage() {
+  removeWelcome();
+  const div = document.createElement('div');
+  div.className = 'message ai';
+  div.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+  messagesEl.appendChild(div);
+  scrollToBottom();
+
+  let typingRemoved = false;
+  let contentArea = null;
+  let accum = '';
+
+  function ensureTypingRemoved() {
+    if (!typingRemoved) {
+      div.innerHTML = '';
+      typingRemoved = true;
+    }
+  }
+
+  function getContentArea() {
+    if (!contentArea) {
+      ensureTypingRemoved();
+      contentArea = document.createElement('div');
+      contentArea.className = 'chat-content';
+      div.appendChild(contentArea);
+    }
+    return contentArea;
+  }
+
+  return {
+    element: div,
+
+    append(text) {
+      accum += text;
+      const area = getContentArea();
+      area.innerHTML = marked.parse(accum);
+      scrollToBottom();
+    },
+
+    appendStatus(text) {
+      const area = getContentArea();
+      const line = document.createElement('div');
+      line.className = 'ai-status-line';
+      line.textContent = text;
+      area.appendChild(line);
+      scrollToBottom();
+    },
+
+    finish() {
+      ensureTypingRemoved();
+      if (!contentArea) {
+        div.innerHTML = '<span class="text-slate-500">(无内容)</span>';
+      }
+      scrollToBottom();
+    },
+  };
 }
 
 function scrollToBottom() {

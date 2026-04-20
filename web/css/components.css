@@ -1,3 +1,46 @@
+/* ── Upload progress ring ────────────────────────────────────────────── */
+.uploading-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.upload-ring {
+  flex-shrink: 0;
+}
+.upload-ring-fill {
+  stroke: #3b82f6;
+  transition: stroke-dashoffset 0.25s ease-out;
+}
+.upload-label {
+  font-size: 12px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.upload-pct {
+  font-size: 11px;
+  font-weight: 600;
+  color: #60a5fa;
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+  text-align: right;
+}
+
+/* ── Stop button ─────────────────────────────────────────────────────── */
+#btn-send.btn-stop {
+  background: #ef4444 !important;
+  box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  animation: pulse-stop 1.5s ease-in-out infinite;
+}
+#btn-send.btn-stop:hover {
+  background: #dc2626 !important;
+}
+@keyframes pulse-stop {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
 /* ── Buttons ──────────────────────────────────────────────────────────── */
 .btn-secondary {
   background: rgba(255, 255, 255, 0.04);
@@ -330,6 +373,51 @@
   background: rgba(59, 130, 246, 0.12);
   color: #60a5fa;
   font-weight: 500;
+}
+
+/* ── Input intent (action / chat) segmented control ──────────────────── */
+.input-intent {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+:root.light .input-intent {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: rgba(0, 0, 0, 0.06);
+}
+
+.intent-btn {
+  border: none;
+  background: transparent;
+  color: #64748b;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.intent-btn:hover {
+  color: #94a3b8;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.intent-btn.active {
+  background: rgba(59, 130, 246, 0.14);
+  color: #60a5fa;
+  font-weight: 500;
+}
+
+/* chips dimmed when chat intent is active — chips stay visible, ✕ disabled */
+.chips-dimmed .field-chip {
+  opacity: 0.45;
+  pointer-events: none;
+  filter: grayscale(0.4);
 }
 
 /* ── Compliance file slots ───────────────────────────────────────────── */
@@ -836,7 +924,116 @@ html:not(.dark) .cr-btn:hover { background: rgba(0,0,0,0.08); color: #1e293b; }
   border-top: 1px solid rgba(255,255,255,0.04);
 }
 .cr-page { font-size: 10px; color: #475569; flex-shrink: 0; }
-.cr-source { font-size: 10px; color: #334155; font-style: italic; word-break: break-all; }
+.cr-source { font-size: 10px; color: #334155; font-style: italic; word-break: break-all; flex: 1; }
+
+/* Per-card action buttons (edit / reeval) */
+.cr-head-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cr-edited-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(59,130,246,0.15);
+  color: #60a5fa;
+  white-space: nowrap;
+}
+html:not(.dark) .cr-edited-badge { background: rgba(59,130,246,0.1); color: #2563eb; }
+
+.cr-card-actions {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.cr-card-btn {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: rgba(255,255,255,0.04);
+  color: #94a3b8;
+  border: 1px solid rgba(255,255,255,0.08);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all .15s;
+}
+.cr-card-btn:hover { background: rgba(59,130,246,0.12); color: #60a5fa; border-color: rgba(59,130,246,0.25); }
+html:not(.dark) .cr-card-btn {
+  background: rgba(0,0,0,0.03);
+  color: #64748b;
+  border-color: rgba(0,0,0,0.08);
+}
+html:not(.dark) .cr-card-btn:hover { background: rgba(59,130,246,0.1); color: #2563eb; border-color: rgba(59,130,246,0.25); }
+
+/* Edit mode inputs */
+.cr-card .cr-edit-verdict {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  color: #e2e8f0;
+  border: 1px solid rgba(255,255,255,0.1);
+  cursor: pointer;
+}
+html:not(.dark) .cr-card .cr-edit-verdict {
+  background: #fff;
+  color: #1e293b;
+  border-color: rgba(0,0,0,0.12);
+}
+.cr-edit-row textarea {
+  flex: 1;
+  font-size: 11px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+  color: #e2e8f0;
+  border: 1px solid rgba(255,255,255,0.1);
+  resize: vertical;
+  font-family: inherit;
+  line-height: 1.5;
+}
+html:not(.dark) .cr-edit-row textarea {
+  background: #fff;
+  color: #1e293b;
+  border-color: rgba(0,0,0,0.12);
+}
+.cr-edit-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255,255,255,0.04);
+}
+html:not(.dark) .cr-edit-actions { border-top-color: rgba(0,0,0,0.05); }
+.cr-save-btn { background: rgba(34,197,94,0.15); color: #22c55e; border-color: rgba(34,197,94,0.25); }
+.cr-save-btn:hover { background: rgba(34,197,94,0.25); color: #16a34a; }
+
+/* Focused field chip above chat input */
+.cr-focus-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  border-radius: 14px;
+  background: rgba(59,130,246,0.12);
+  color: #60a5fa;
+  border: 1px solid rgba(59,130,246,0.25);
+}
+.cr-focus-chip .cr-chip-close {
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 2px;
+  opacity: 0.7;
+}
+.cr-focus-chip .cr-chip-close:hover { opacity: 1; }
+html:not(.dark) .cr-focus-chip { background: rgba(59,130,246,0.08); color: #2563eb; }
 
 /* Light theme */
 html:not(.dark) .cr-card { border-color: rgba(0,0,0,0.06); background: #fafafa; }

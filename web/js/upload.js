@@ -127,13 +127,34 @@ fileInput.addEventListener('change', async () => {
 });
 
 async function doUpload(file, fileType = 'tender') {
-  const label = fileType === 'bid' ? '📄' : '📎';
-  attachmentsEl.insertAdjacentHTML('beforeend',
-    `<span class="attachment-tag uploading-tag">⏳ 上传中: ${escapeHtml(file.name)}</span>`);
+  // 创建带圆形进度的上传标签
+  const tag = document.createElement('span');
+  tag.className = 'attachment-tag uploading-tag';
+  tag.innerHTML = `
+    <svg class="upload-ring" width="20" height="20" viewBox="0 0 20 20">
+      <circle class="upload-ring-bg" cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2" opacity="0.15"/>
+      <circle class="upload-ring-fill" cx="10" cy="10" r="8" fill="none" stroke="currentColor" stroke-width="2.5"
+              stroke-dasharray="50.27" stroke-dashoffset="50.27" stroke-linecap="round"
+              transform="rotate(-90 10 10)"/>
+    </svg>
+    <span class="upload-label">上传中: ${escapeHtml(file.name)}</span>
+    <span class="upload-pct">0%</span>
+  `;
+  attachmentsEl.appendChild(tag);
+
+  const circle = tag.querySelector('.upload-ring-fill');
+  const pctEl = tag.querySelector('.upload-pct');
+  const circumference = 2 * Math.PI * 8; // ≈ 50.27
+
+  function onProgress(pct) {
+    const offset = circumference * (1 - pct / 100);
+    circle.style.strokeDashoffset = offset;
+    pctEl.textContent = `${pct}%`;
+  }
+
   try {
-    const result = await uploadFile(file, fileType);
-    // 移除上传中提示
-    attachmentsEl.querySelector('.uploading-tag')?.remove();
+    const result = await uploadFile(file, fileType, onProgress);
+    tag.remove();
     if (currentMode === 'compliance') {
       if (fileType === 'tender') { tenderFileId = result.id; tenderFileName = result.filename; }
       else { bidFileId = result.id; bidFileName = result.filename; }
@@ -143,7 +164,7 @@ async function doUpload(file, fileType = 'tender') {
     }
     renderAttachment();
   } catch (err) {
-    attachmentsEl.querySelector('.uploading-tag')?.remove();
+    tag.remove();
     attachmentsEl.insertAdjacentHTML('beforeend',
       `<span class="attachment-tag" style="color:var(--danger)">❌ ${escapeHtml(err.message)}</span>`);
   }
@@ -492,6 +513,7 @@ export function clearExtractionCache() {
   try { localStorage.removeItem('extractionCache'); } catch (_) {}
 }
 
+export function getExtractionCache() { return { ...extractionCache }; }
 export function getMode() { return currentMode; }
 export function getTenderFileId() { return tenderFileId; }
 export function getBidFileId() { return bidFileId; }

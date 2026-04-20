@@ -20,6 +20,9 @@ class ChatCompletionRequest(BaseModel):
     temperature: Optional[float] = None
     max_tokens: Optional[int] = None
     use_cache: bool = True   # True=优先读向量缓存；False=强制重新切分并向量化
+    mode: str = "extract"    # "extract" | "chat"
+    file_id: Optional[str] = None       # chat 模式下指定关联文档
+    context_data: Optional[dict] = None  # chat 模式下传入已有提取结果或合规报告
 
 
 # ── OpenAI 非流式响应 ──────────────────────────────────────────────────────
@@ -134,4 +137,16 @@ class ChecklistRequest(BaseModel):
 class ComplianceCheckRequest(BaseModel):
     file_id: str
     checklist: list[ChecklistItem]
+    use_cache: bool = True
+
+
+class ComplianceReevalRequest(BaseModel):
+    """基于用户补充信息，对单个合规字段重新判定。"""
+    file_id: str
+    field_key: str
+    requirement: str
+    current_response: str = ""
+    current_verdict: str = "warn"
+    current_reason: str = ""
+    additional_context: str
     use_cache: bool = True

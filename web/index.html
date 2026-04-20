@@ -154,6 +154,10 @@
         <div class="input-attachments" id="input-attachments"></div>
         <div class="field-chips" id="field-chips"></div>
         <div class="flex items-center gap-2">
+          <div id="input-intent" class="input-intent" role="tablist" aria-label="输入意图">
+            <button class="intent-btn active" data-intent="action" type="button" title="执行动作（提取 / 核查）">动作</button>
+            <button class="intent-btn" data-intent="chat" type="button" title="自由对话">对话</button>
+          </div>
           <button id="btn-upload" class="p-2.5 rounded-lg dark:hover:bg-white/5 hover:bg-black/5 text-slate-400 hover:text-accent transition" title="上传 PDF">
             <i data-lucide="paperclip" class="w-5 h-5"></i>
           </button>

@@ -21,24 +21,31 @@ class RAGEngine:
         self.index: faiss.IndexFlatIP | None = None
         self.chunks: list[dict] = []
 
-    async def _embed_batched(self, texts: list[str]) -> np.ndarray:
-        """分批调用 embedding API，L2 归一化后返回。"""
+    async def _embed_batched(self, texts: list[str], on_progress=None) -> np.ndarray:
+        """分批调用 embedding API，L2 归一化后返回。
+
+        Args:
+            on_progress: 可选回调 (done, total) -> None，每批完成后调用。
+        """
         all_vecs = []
-        for i in range(0, len(texts), _EMBED_BATCH):
+        total = len(texts)
+        for i in range(0, total, _EMBED_BATCH):
             batch = texts[i: i + _EMBED_BATCH]
             vecs = await self.embed_client.embed(batch)
             all_vecs.extend(vecs)
+            if on_progress:
+                on_progress(min(i + len(batch), total), total)
 
         arr = np.array(all_vecs, dtype=np.float32)
         faiss.normalize_L2(arr)     # 归一化后内积 == 余弦相似度
         return arr
 
-    async def build_index(self, chunks: list[dict]) -> None:
+    async def build_index(self, chunks: list[dict], on_progress=None) -> None:
         """从文本块列表构建 FAISS 内积索引。"""
         self.chunks = chunks
         texts = [c["text"] for c in chunks]
         logger.info("构建向量索引，共 %d 个文本块（批大小 %d）…", len(texts), _EMBED_BATCH)
-        vecs = await self._embed_batched(texts)
+        vecs = await self._embed_batched(texts, on_progress)
         self.index = faiss.IndexFlatIP(self.dimensions)
         self.index.add(vecs)
         logger.info("索引构建完成")
@@ -109,19 +116,23 @@ class ParentChildRAGEngine:
         self.parent_chunks: list[dict] = []
         self.child_chunks: list[dict] = []
 
-    async def _embed_batched(self, texts: list[str]) -> np.ndarray:
+    async def _embed_batched(self, texts: list[str], on_progress=None) -> np.ndarray:
         """分批调用 embedding API，L2 归一化后返回。"""
         all_vecs = []
-        for i in range(0, len(texts), _EMBED_BATCH):
+        total = len(texts)
+        for i in range(0, total, _EMBED_BATCH):
             batch = texts[i: i + _EMBED_BATCH]
             vecs = await self.embed_client.embed(batch)
             all_vecs.extend(vecs)
+            if on_progress:
+                on_progress(min(i + len(batch), total), total)
         arr = np.array(all_vecs, dtype=np.float32)
         faiss.normalize_L2(arr)
         return arr
 
     async def build_index(
-        self, parent_chunks: list[dict], child_chunks: list[dict]
+        self, parent_chunks: list[dict], child_chunks: list[dict],
+        on_progress=None,
     ) -> None:
         """对子块构建 FAISS 索引，同时存储父块映射。"""
         self.parent_chunks = parent_chunks
@@ -131,7 +142,7 @@ class ParentChildRAGEngine:
             "构建父子向量索引：%d 个父块，%d 个子块（批大小 %d）…",
             len(parent_chunks), len(texts), _EMBED_BATCH,
         )
-        vecs = await self._embed_batched(texts)
+        vecs = await self._embed_batched(texts, on_progress)
         self.child_index = faiss.IndexFlatIP(self.dimensions)
         self.child_index.add(vecs)
         logger.info("父子索引构建完成")

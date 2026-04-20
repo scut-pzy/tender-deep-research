@@ -1,4 +1,5 @@
 """统一的 AI API 调用封装（基于 httpx，OpenAI 兼容格式）。"""
+import asyncio
 import json
 from typing import Any, AsyncGenerator
 
@@ -11,6 +12,16 @@ logger = get_logger(__name__)
 _TIMEOUT = httpx.Timeout(120.0, connect=10.0)
 
 
+def _is_retryable(exc: Exception) -> bool:
+    """判断异常是否值得重试（网络/超时/5xx/429）。"""
+    if isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError)):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status == 429 or status >= 500
+    return False
+
+
 class LLMClient:
     """文本语言模型客户端。"""
 
@@ -20,6 +31,20 @@ class LLMClient:
         self.model = cfg["model"]
         self.temperature = cfg.get("temperature", 0.3)
         self.max_tokens = cfg.get("max_tokens", 4096)
+        # 重试策略（默认不重试，子类可覆盖）
+        self.max_retries: int = cfg.get("max_retries", 0)
+        self.retry_delay: float = cfg.get("retry_delay", 0.0)
+
+    async def _do_chat_request(self, payload: dict) -> str:
+        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+            resp = await client.post(
+                f"{self.api_base}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json=payload,
+            )
+            resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
 
     async def chat(self, messages: list[dict], json_mode: bool = False, **kwargs) -> str:
         payload: dict[str, Any] = {
@@ -31,16 +56,27 @@ class LLMClient:
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
 
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(
-                f"{self.api_base}/chat/completions",
-                headers={"Authorization": f"Bearer {self.api_key}"},
-                json=payload,
-            )
-            resp.raise_for_status()
-
-        data = resp.json()
-        return data["choices"][0]["message"]["content"]
+        last_exc: Exception | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                return await self._do_chat_request(payload)
+            except Exception as e:
+                last_exc = e
+                if attempt >= self.max_retries or not _is_retryable(e):
+                    raise
+                logger.warning(
+                    "%s 调用失败 [%s]：%s，%.0fs 后重试 (%d/%d)",
+                    self.__class__.__name__,
+                    type(e).__name__,
+                    e,
+                    self.retry_delay,
+                    attempt + 1,
+                    self.max_retries,
+                )
+                await asyncio.sleep(self.retry_delay)
+        # 理论上不会到达
+        assert last_exc is not None
+        raise last_exc
 
     async def chat_stream(
         self, messages: list[dict], json_mode: bool = False, **kwargs
@@ -91,6 +127,12 @@ class LLMClient:
 
 class VLMClient(LLMClient):
     """视觉语言模型客户端，支持 base64 图片输入。"""
+
+    def __init__(self, cfg: dict):
+        super().__init__(cfg)
+        # VLM 默认启用重试：最多 10 次，每次间隔 10s（Critic 阶段稳定性要求）
+        self.max_retries = cfg.get("max_retries", 10)
+        self.retry_delay = cfg.get("retry_delay", 10.0)
 
     async def chat_with_image(
         self, text_prompt: str, image_base64_list: list[str], mime: str = "image/png", **kwargs
