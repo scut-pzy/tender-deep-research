@@ -1,0 +1,24 @@
+{
+  "id": "5bb01ba2e248",
+  "type": "compliance",
+  "timestamp": 1776324689.3062303,
+  "filename": "11ccc80f4bb554ade2cc6ddbd61b31b5.pdf",
+  "pdf_path": "cache/uploads/11ccc80f4bb554ade2cc6ddbd61b31b5.pdf",
+  "keys": [
+    "项目名称与编号",
+    "招标人信息",
+    "项目概况",
+    "招标方式"
+  ],
+  "result": {},
+  "stream_log": [
+    "🔍 开始核查投标书...\n\n",
+    "📄 **Step 1/3: 投标书预处理**\n",
+    "  ✅ 共识别 **577** 页\n\n",
+    "🧮 **Step 2/3: 构建检索索引（父子分块检索）**\n",
+    "  ⚡ 命中缓存，跳过 Embedding（共 **2065** 个向量）\n\n",
+    "🔎 **Step 3/3: 逐字段核验**（共 4 项）\n\n",
+    "🔑 开始处理「项目名称与编号」(1/4)\n",
+    "  → Policy 提取（投标书）...\n"
+  ]
+}

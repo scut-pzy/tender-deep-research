@@ -6,10 +6,6 @@ __pycache__/
 .venv/
 venv/
 
-# 运行时缓存（保留目录结构）
-cache/uploads/*
+# 页面截图缓存（体积大，通过 init_pages.py 从 PDF 重新生成）
 cache/pages/*
-cache/vectors/*
-!cache/uploads/.gitkeep
 !cache/pages/.gitkeep
-!cache/vectors/.gitkeep
