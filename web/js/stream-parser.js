@@ -179,6 +179,23 @@ export class StreamParser {
       return { target: TARGET.REWRITE, text: line, event: 'query_refine_terms', data: { terms: queryTermsMatch[1] } };
     }
 
+    // Field result detection — must precede inRewriteBlock check so that Round 3
+    // re-extraction results still update the live table even while in rewrite context.
+    const fieldMatch = trimmed.match(RE_FIELD);
+    if (fieldMatch) {
+      return {
+        target: TARGET.POLICY,
+        text: line,
+        event: 'field_result',
+        data: {
+          key: fieldMatch[1],
+          value: fieldMatch[2],
+          page: parseInt(fieldMatch[3]),
+          confidence: parseInt(fieldMatch[4]) / 100,
+        },
+      };
+    }
+
     // If in rewrite block, keep routing there until new stage
     if (this.inRewriteBlock && this.currentTarget === TARGET.REWRITE) {
       return { target: TARGET.REWRITE, text: line };
@@ -204,22 +221,6 @@ export class StreamParser {
         text: line,
         event: 'round_start',
         data: { roundNum },
-      };
-    }
-
-    // Field result detection (inside Policy block)
-    const fieldMatch = trimmed.match(RE_FIELD);
-    if (fieldMatch) {
-      return {
-        target: TARGET.POLICY,
-        text: line,
-        event: 'field_result',
-        data: {
-          key: fieldMatch[1],
-          value: fieldMatch[2],
-          page: parseInt(fieldMatch[3]),
-          confidence: parseInt(fieldMatch[4]) / 100,
-        },
       };
     }
 
