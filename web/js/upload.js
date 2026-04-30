@@ -535,8 +535,10 @@ export function setMode(mode) {
     tenderFileName = currentFileName || tenderFileName;
     currentFileId = null; currentFileName = null;
   } else {
+    // 切换回提取模式：将招标书还原为当前文件，避免来回切换时文件丢失
+    currentFileId = tenderFileId || currentFileId;
+    currentFileName = tenderFileName || currentFileName;
     tenderFileId = null; tenderFileName = null;
-    currentFileId = null; currentFileName = null;
   }
 
   renderAttachment();

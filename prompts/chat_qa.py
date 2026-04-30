@@ -67,6 +67,28 @@ def build_chat_qa_prompt(
             "- 其它字段（response/reason）可按需省略，省略即保留原值。\n"
             "- 正文先用 Markdown 解释判断依据，JSON 放在最后。\n"
         )
+    elif isinstance(context_data, dict):
+        # 提取模式 — 始终启用字段写回机制
+        empty_fields = [k for k, v in context_data.items() if not v or v == '未找到']
+        if empty_fields:
+            fields_str = "、".join(f"「{f}」" for f in empty_fields)
+            system += f"\n⚠️ 以下字段尚未提取到值：{fields_str}\n"
+
+        system += (
+            "\n## 字段写回规则（重要）\n"
+            "你是提取助手。**只要你在文档中找到了任何字段的具体值**（无论用户是否明说'更新'），\n"
+            "**必须**在回答正文之后追加如下 JSON 代码块，将找到的值列出：\n\n"
+            "```json\n"
+            '{"field_updates": [\n'
+            '  {"key": "项目名称与编号", "value": "阆中市西元街、一元街片区城市燃气管道等老化更新改造建设项目"}\n'
+            "]}\n"
+            "```\n\n"
+            "硬性规则：\n"
+            "1. `key` 必须与「已有分析结果」中的字段名**字符完全一致**（含书名号/标点）。\n"
+            "2. `value` 必须来自文档原文，禁止编造；确实找不到时省略该字段，不输出空值。\n"
+            "3. **每次回答只要涉及字段值就必须输出 JSON**，哪怕用户只是在提问。\n"
+            "4. JSON 块放在正文末尾，不要放在正文中间。\n"
+        )
 
     return [
         {"role": "system", "content": system},

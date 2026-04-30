@@ -15,6 +15,7 @@ import {
   appendPolicy,
   appendCritic,
   appendRewriteFeedback,
+  appendQueryRefine,
 } from './sidebar.js';
 import {
   getFields, getFileId, getFileName, isReady, getMode,
@@ -40,6 +41,7 @@ const btnSend = document.getElementById('btn-send');
 
 let isStreaming = false;
 let lastComplianceItems = null; // 保存最近一次合规报告，切 tab 后可恢复
+let lastExtractionMsg = null;   // 保存最近一次提取的 aiMsg，供对话写回用
 let focusedField = null; // { idx, item } — 对话重核时聚焦的合规字段
 let inputIntent = 'action'; // 'action' | 'chat' — 输入框左侧分段控件状态
 
@@ -279,6 +281,7 @@ async function handleSend() {
     }
 
     aiMsg.finish();
+    lastExtractionMsg = aiMsg; // 保存引用，供对话写回字段
     // Push final rendered table values into cache (overwrite mid-stream partials)
     const finalValues = aiMsg.getFieldValues();
     for (const [key, value] of Object.entries(finalValues)) {
@@ -409,15 +412,17 @@ async function handleChatSend() {
     }
     aiMsg.finish();
 
-    // 合规对话：解析尾部 ```json``` 块并应用 patch
-    if (isComplianceChat && Array.isArray(lastComplianceItems)) {
-      const m = fullText.match(/```json\s*\n([\s\S]*?)\n```/);
-      if (m) {
-        try {
-          const parsed = JSON.parse(m[1]);
-          const updates = Array.isArray(parsed?.updates) ? parsed.updates : [];
+    // 解析尾部 ```json``` 块（宽松匹配）
+    const m = fullText.match(/```json\s*\n?([\s\S]*?)\n?```/);
+    let autoApplied = 0;
+    if (m) {
+      try {
+        const parsed = JSON.parse(m[1]);
+
+        // 合规对话：应用 compliance patch
+        if (isComplianceChat && Array.isArray(lastComplianceItems) && Array.isArray(parsed?.updates)) {
           let applied = 0;
-          for (const upd of updates) {
+          for (const upd of parsed.updates) {
             if (!upd || !upd.key) continue;
             const idx = lastComplianceItems.findIndex(it => it.key === upd.key);
             if (idx < 0) continue;
@@ -433,9 +438,32 @@ async function handleChatSend() {
           if (applied > 0) {
             aiMsg.appendStatus(`✅ 已自动更新 ${applied} 条合规条目（查看右侧报告）`);
           }
-        } catch (e) {
-          console.warn('解析合规对话 updates JSON 失败', e);
         }
+
+        // 提取对话：将找到的字段写回提取表和审查清单
+        if (!isComplianceChat && Array.isArray(parsed?.field_updates)) {
+          autoApplied = _applyFieldUpdates(parsed.field_updates, aiMsg);
+        }
+      } catch (e) {
+        console.warn('解析对话 JSON 失败', e);
+      }
+    }
+
+    // 提取模式：若自动写回未触发，显示手动写回按钮
+    if (!isComplianceChat && autoApplied === 0 && lastExtractionMsg) {
+      const emptyFields = Object.entries(getExtractionCache())
+        .filter(([, v]) => !v || v === '未找到')
+        .map(([k]) => k);
+      if (emptyFields.length > 0) {
+        aiMsg.addActionButton('📥 写回提取表', async (btn) => {
+          btn.disabled = true;
+          btn.textContent = '查找中...';
+          try {
+            await _doWriteBackRequest(fileId, emptyFields, contextData, aiMsg);
+          } finally {
+            btn.remove();
+          }
+        });
       }
     }
   } catch (err) {
@@ -518,6 +546,59 @@ async function handleReevalSend() {
 }
 
 /**
+ * Apply field_updates array to extraction table + cache. Returns count applied.
+ */
+function _applyFieldUpdates(updates, statusMsg) {
+  let applied = 0;
+  for (const upd of updates) {
+    if (!upd || !upd.key || !upd.value) continue;
+    setExtractionResult(upd.key, upd.value);
+    if (lastExtractionMsg) {
+      lastExtractionMsg.appendField(upd.key, upd.value, null, 1.0);
+      lastExtractionMsg.updateVerification(upd.key, true);
+    }
+    applied++;
+  }
+  if (applied > 0) {
+    renderChecklistPanel();
+    statusMsg?.appendStatus(`✅ 已将 ${applied} 个字段写回提取表与审查清单`);
+  }
+  return applied;
+}
+
+/**
+ * Dedicated write-back request: send a focused prompt to extract empty fields.
+ */
+async function _doWriteBackRequest(fileId, emptyFields, contextData, statusMsg) {
+  const fieldList = emptyFields.join('、');
+  const question = (
+    `请在文档中找出以下字段的具体值，只输出JSON代码块，不要任何其他文字：\n` +
+    `字段：${fieldList}\n` +
+    `格式：\`\`\`json\n{"field_updates":[{"key":"字段名","value":"值"}]}\n\`\`\``
+  );
+
+  let text = '';
+  for await (const chunk of streamChatQA(fileId, question, contextData)) {
+    text += chunk;
+  }
+
+  const m = text.match(/```json\s*\n?([\s\S]*?)\n?```/);
+  if (m) {
+    try {
+      const parsed = JSON.parse(m[1]);
+      if (Array.isArray(parsed?.field_updates)) {
+        const applied = _applyFieldUpdates(parsed.field_updates, statusMsg);
+        if (applied === 0) statusMsg?.appendStatus('⚠️ 文档中未找到这些字段的值');
+      }
+    } catch (e) {
+      statusMsg?.appendStatus('⚠️ 解析失败：' + e.message);
+    }
+  } else {
+    statusMsg?.appendStatus('⚠️ 模型未返回结构化结果');
+  }
+}
+
+/**
  * Route a single parsed event to the appropriate UI component.
  */
 export function routeEvent(evt, aiMsg, inSummary) {
@@ -558,13 +639,25 @@ export function routeEvent(evt, aiMsg, inSummary) {
   }
 
   if (event === 'critic_result' && data) {
-    aiMsg.updateVerification(data.key, data.verified);
-    appendCritic(text);
+    if (!data.isVlmError) {
+      aiMsg.updateVerification(data.key, data.verified);
+    }
+    appendCritic(text, data.isVlmError);
     return;
   }
 
   if (event === 'rewrite_feedback') {
     appendRewriteFeedback(text);
+    return;
+  }
+
+  if (event === 'query_refine_start') {
+    appendQueryRefine(text);
+    return;
+  }
+
+  if (event === 'query_refine_terms' && data) {
+    appendQueryRefine(text, data.terms);
     return;
   }
 

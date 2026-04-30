@@ -22,7 +22,7 @@ class ChatCompletionRequest(BaseModel):
     use_cache: bool = True   # True=优先读向量缓存；False=强制重新切分并向量化
     mode: str = "extract"    # "extract" | "chat"
     file_id: Optional[str] = None       # chat 模式下指定关联文档
-    context_data: Optional[dict] = None  # chat 模式下传入已有提取结果或合规报告
+    context_data: Optional[Any] = None  # chat 模式下传入已有提取结果（dict）或合规报告（list）
 
 
 # ── OpenAI 非流式响应 ──────────────────────────────────────────────────────

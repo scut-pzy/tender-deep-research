@@ -73,6 +73,11 @@
   color: #fbbf24;
 }
 
+.round-badge.rewriting {
+  background: rgba(139, 92, 246, 0.12);
+  color: #a78bfa;
+}
+
 .round-header .round-chevron {
   transition: transform 0.2s ease;
   color: #475569;
@@ -282,6 +287,12 @@
 
 .critic-icon.pass { color: #22c55e; }
 .critic-icon.fail { color: #ef4444; }
+.critic-icon.warn { color: #f59e0b; }
+
+.critic-item.warn-row {
+  background: rgba(245, 158, 11, 0.06);
+  border-left: 2px solid rgba(245, 158, 11, 0.4);
+}
 
 .critic-key {
   font-weight: 600;
@@ -345,6 +356,43 @@
   color: #d4a574;
   padding: 1px 10px;
   line-height: 1.6;
+}
+
+/* ── Query refine block (purple accent, Round 3) ─────────────────────── */
+.refine-block {
+  margin: 4px 8px;
+  border-left: 3px solid rgba(139, 92, 246, 0.6);
+  border-radius: 0 8px 8px 0;
+  background: rgba(139, 92, 246, 0.04);
+  padding: 6px 0 6px 0;
+}
+
+.refine-header {
+  font-size: 11px;
+  font-weight: 700;
+  color: #a78bfa;
+  padding: 2px 10px 4px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.refine-header-icon svg {
+  width: 13px;
+  height: 13px;
+  color: #a78bfa;
+}
+
+.refine-terms-item {
+  padding: 4px 10px;
+  margin: 2px 8px;
+  background: rgba(139, 92, 246, 0.06);
+  border-radius: 5px;
+  font-size: 11px;
+  color: #c4b5fd;
+  animation: fadeIn 0.25s ease-out;
 }
 
 /* ── Prep section ────────────────────────────────────────────────────── */

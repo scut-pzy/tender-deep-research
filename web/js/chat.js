@@ -759,6 +759,18 @@ export function createChatAiMessage() {
       scrollToBottom();
     },
 
+    /** Add a pill action button below the chat content. onClick receives the button element. */
+    addActionButton(label, onClick) {
+      const area = getContentArea();
+      const btn = document.createElement('button');
+      btn.className = 'chat-action-btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => onClick(btn));
+      area.appendChild(btn);
+      scrollToBottom();
+      return btn;
+    },
+
     finish() {
       ensureTypingRemoved();
       if (!contentArea) {

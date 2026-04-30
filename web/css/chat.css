@@ -531,3 +531,36 @@ html:not(.dark) .message.ai h3 {
 }
 
 html:not(.dark) .ai-status-line { color: var(--text-secondary); }
+
+/* ── Chat action button (write-back etc.) ──────────────────────────────── */
+.chat-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+  padding: 0.4rem 0.9rem;
+  border-radius: 8px;
+  border: 1px solid rgba(59,130,246,0.35);
+  background: rgba(59,130,246,0.08);
+  color: #60a5fa;
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+.chat-action-btn:hover {
+  background: rgba(59,130,246,0.16);
+  border-color: rgba(59,130,246,0.55);
+}
+
+.chat-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+html:not(.dark) .chat-action-btn {
+  border-color: rgba(59,130,246,0.3);
+  color: #2563eb;
+  background: rgba(59,130,246,0.06);
+}

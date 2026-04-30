@@ -49,6 +49,8 @@ const RE_CRITIC_FAIL = /❌\s*「([^」]+)」[：:]\s*(.*)/;
 const RE_REWRITE_HEADER = /Critic\s*→\s*Policy\s*反馈/;
 const RE_EMBED_PROGRESS = /⏳\s*Embedding\s*进度[：:]\s*(\d+)\/(\d+)[（(](\d+)%[)）]/;
 const RE_SUMMARY = /^##\s*📋/;
+const RE_QUERY_REFINE = /→\s*重新生成\s*RAG\s*检索词/;
+const RE_QUERY_TERMS = /→\s*新检索词[：:]\s*(.*)/;
 
 export class StreamParser {
   constructor() {
@@ -165,6 +167,18 @@ export class StreamParser {
       return { target: TARGET.REWRITE, text: line, event: 'rewrite_feedback' };
     }
 
+    // Round 3: query refinement lines
+    if (RE_QUERY_REFINE.test(trimmed)) {
+      this.inRewriteBlock = true;
+      this.currentTarget = TARGET.REWRITE;
+      return { target: TARGET.REWRITE, text: line, event: 'query_refine_start' };
+    }
+
+    const queryTermsMatch = trimmed.match(RE_QUERY_TERMS);
+    if (queryTermsMatch) {
+      return { target: TARGET.REWRITE, text: line, event: 'query_refine_terms', data: { terms: queryTermsMatch[1] } };
+    }
+
     // If in rewrite block, keep routing there until new stage
     if (this.inRewriteBlock && this.currentTarget === TARGET.REWRITE) {
       return { target: TARGET.REWRITE, text: line };
@@ -223,11 +237,13 @@ export class StreamParser {
     // Critic fail
     const failMatch = trimmed.match(RE_CRITIC_FAIL);
     if (failMatch) {
+      const detail = failMatch[2];
+      const isVlmError = detail.includes('VLM调用失败') || detail.includes('第3轮异常') || detail.includes('异常 (');
       return {
         target: TARGET.CRITIC,
         text: line,
         event: 'critic_result',
-        data: { key: failMatch[1], verified: false, detail: failMatch[2] },
+        data: { key: failMatch[1], verified: false, detail, isVlmError },
       };
     }
 

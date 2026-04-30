@@ -255,9 +255,9 @@ export function appendPolicy(text) {
 
 /**
  * Append text to current round's Critic block.
- * ✅/❌ lines become colored badge rows.
+ * ✅/❌ lines become colored badge rows; VLM errors shown as warnings.
  */
-export function appendCritic(text) {
+export function appendCritic(text, isVlmError = false) {
   if (!currentRoundEl) return;
   const block = currentRoundEl.querySelector('.critic-block');
   if (!block) return;
@@ -269,6 +269,19 @@ export function appendCritic(text) {
   if (trimmed.startsWith('✅') || trimmed.startsWith('❌')) {
     const isPass = trimmed.startsWith('✅');
     const rest = trimmed.slice(2).trim();
+
+    // VLM call errors → show as a warning row, not a real critic failure
+    if (!isPass && (isVlmError || rest.includes('VLM调用失败') || rest.includes('异常 ('))) {
+      const item = document.createElement('div');
+      item.className = 'critic-item warn-row';
+      item.innerHTML = `
+        <span class="critic-icon warn">⚠️</span>
+        <span class="critic-detail">VLM 调用失败，已跳过核验</span>
+      `;
+      block.appendChild(item);
+      scrollSidebar();
+      return;
+    }
 
     // Try to extract key and detail
     const keyMatch = rest.match(/「([^」]+)」[：:]\s*(.*)/);
@@ -347,6 +360,44 @@ export function appendRewriteFeedback(text) {
 
   // Plain text fallback
   appendDetailLine(rewriteBlock, text);
+  scrollSidebar();
+}
+
+/**
+ * Show query refinement block (Round 3: 重新生成 RAG 检索词).
+ * Updates the field badge to "重写检索词".
+ */
+export function appendQueryRefine(text, terms = null) {
+  if (!currentRoundEl) return;
+  const body = currentRoundEl.querySelector('.round-body');
+  if (!body) return;
+
+  // Update field badge to indicate rewrite state
+  const badge = currentRoundEl.querySelector('.round-badge');
+  if (badge && !badge.classList.contains('all-pass')) {
+    badge.className = 'round-badge rewriting';
+    badge.textContent = '重写检索词';
+  }
+
+  let refineBlock = body.querySelector('.refine-block');
+  if (!refineBlock) {
+    refineBlock = document.createElement('div');
+    refineBlock.className = 'refine-block';
+    refineBlock.innerHTML = `
+      <div class="refine-header">
+        <span class="refine-header-icon">${ICON_REWRITE}</span>
+        重写 RAG 检索词
+      </div>
+    `;
+    body.appendChild(refineBlock);
+  }
+
+  if (terms) {
+    const item = document.createElement('div');
+    item.className = 'refine-terms-item';
+    item.textContent = `新词: ${terms}`;
+    refineBlock.appendChild(item);
+  }
   scrollSidebar();
 }
 

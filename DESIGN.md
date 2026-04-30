@@ -207,12 +207,46 @@ question + file_id
   - 核验标准：允许摘要/简写，但数字/金额/日期必须精确匹配
 
 ### 7.3 RAG 引擎（`core/rag.py`）
-两种模式，由 `config.yaml → rag.mode` 控制：
+
+两种模式，由 `config.yaml → rag.mode` 控制（**当前默认：`parent_child`**）：
 
 | 模式 | 分块策略 | 优点 | 缺点 |
 |------|----------|------|------|
 | `flat` | 滑动窗口，每块 512 字符 | 简单、速度快 | 上下文窗口小，可能截断关键信息 |
 | `parent_child` | 子块（256字）检索，返回父块（1024字） | 检索精度高，上下文完整 | 索引体积更大，构建略慢 |
+
+#### 父子分块实现细节
+
+**分块阶段**（`doc_processor.chunk_text_parent_child()`）
+
+```
+每页文本
+  └─ 按 parent_chunk_size=1024 切父块（重叠 parent_chunk_overlap=128 字）
+       └─ 在每个父块内，按 child_chunk_size=256 切子块（重叠 child_chunk_overlap=64 字）
+            每个 child 记录所属 parent_id
+
+结果：
+  parent_chunks = [{text(1024字), page_num, parent_id}, ...]
+  child_chunks  = [{text(256字),  page_num, child_id, parent_id}, ...]
+```
+
+**构建阶段**（`ParentChildRAGEngine.build_index()`）
+
+- **只对 child_chunks 做 Embedding**（向量化数量少 4 倍，节省 API 用量）
+- 子块向量 L2 归一化后存入 FAISS `IndexFlatIP`
+- 父块原文直接存入内存列表，不做向量化
+
+**检索阶段**（`ParentChildRAGEngine.search(query)`）
+
+```
+query → embed → 在子块索引中搜 top_k×3 候选
+  → 按 parent_id 去重（同一父块多个子块命中时取最高得分）
+  → 按得分排序，返回 top_k 个父块文本
+```
+
+子块精确定位（细粒度匹配），父块完整上下文（LLM 读到更多周边内容），避免关键数字/条款被分块边界截断。
+
+**缓存**：子块索引 + 父子块数据序列化为 `cache/vectors/<hash>_pc.pkl`，同一 PDF 第二次处理直接加载，跳过 Embedding。
 
 技术实现：向量用 L2 归一化后做内积（等价于余弦相似度），使用 FAISS `IndexFlatIP`。
 
