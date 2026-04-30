@@ -566,6 +566,84 @@ async def _compliance_stream(
     yield "data: [DONE]\n\n"
 
 
+# ── /v1/config（设置面板读写）────────────────────────────────────────────────
+
+def _mask_key(key: str) -> str:
+    """将 API Key 脱敏，仅保留前6位和后4位。"""
+    if not key or len(key) <= 12:
+        return "***"
+    return key[:6] + "***" + key[-4:]
+
+
+@app.get("/v1/config")
+async def get_config():
+    """返回当前运行配置（API Key 脱敏后返回，供设置面板展示）。"""
+    import copy
+    cfg = copy.deepcopy(CFG)
+    for section in ("policy_llm", "critic_vlm", "embedding"):
+        if section in cfg and "api_key" in cfg[section]:
+            cfg[section]["api_key"] = _mask_key(cfg[section]["api_key"])
+    return cfg
+
+
+@app.patch("/v1/config")
+async def patch_config(updates: dict):
+    """热更新运行配置并重载 AI 客户端。
+
+    支持的顶层 key：policy_llm / critic_vlm / embedding / rag / pipeline / server
+    API Key 若传入掩码值（含 '***'）则忽略，不覆盖原值。
+    """
+    allowed_sections = {"policy_llm", "critic_vlm", "embedding", "rag", "pipeline", "server"}
+    for section, values in updates.items():
+        if section not in allowed_sections:
+            continue
+        if not isinstance(values, dict):
+            continue
+        if section not in CFG:
+            CFG[section] = {}
+        for k, v in values.items():
+            # 跳过掩码值，避免覆盖真实 Key
+            if k == "api_key" and isinstance(v, str) and "***" in v:
+                continue
+            CFG[section][k] = v
+
+    orchestrator.reload_clients()
+
+    # 将新 API Key 写回 .env（只写非掩码的 Key，且仅当值实际变化时）
+    try:
+        env_path = Path(__file__).parent / ".env"
+        _persist_env_keys(updates, env_path)
+    except Exception:
+        logger.warning("写入 .env 失败，配置已在内存中生效但重启后需重新设置")
+
+    return {"status": "ok"}
+
+
+def _persist_env_keys(updates: dict, env_path: Path) -> None:
+    """将 updates 中的 api_key 写入 .env，使重启后仍然有效。"""
+    # 收集所有不含掩码的新 Key
+    new_keys: dict[str, str] = {}
+    for section in ("policy_llm", "critic_vlm", "embedding"):
+        key_val = updates.get(section, {}).get("api_key", "")
+        if key_val and "***" not in key_val:
+            new_keys["DASHSCOPE_API_KEY"] = key_val  # 目前三者共用同一个环境变量
+
+    if not new_keys:
+        return
+
+    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
+    existing = {line.split("=", 1)[0]: i for i, line in enumerate(lines) if "=" in line and not line.startswith("#")}
+
+    for var, val in new_keys.items():
+        if var in existing:
+            lines[existing[var]] = f"{var}={val}"
+        else:
+            lines.append(f"{var}={val}")
+
+    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    logger.info(".env 已更新: %s", list(new_keys.keys()))
+
+
 # ── /health ──────────────────────────────────────────────────────────────────
 @app.get("/health")
 async def health():

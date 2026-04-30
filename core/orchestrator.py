@@ -48,6 +48,17 @@ class Orchestrator:
         self.critic_agent = CriticAgent(VLMClient(cfg["critic_vlm"]))
         self.embed_client = EmbeddingClient(cfg["embedding"])
 
+    def reload_clients(self) -> None:
+        """热重载所有 AI 客户端（修改 config 后调用，无需重启服务）。"""
+        self.policy_llm = LLMClient(self.cfg["policy_llm"])
+        self.policy_agent = PolicyAgent(self.policy_llm)
+        self.critic_agent = CriticAgent(VLMClient(self.cfg["critic_vlm"]))
+        self.embed_client = EmbeddingClient(self.cfg["embedding"])
+        self.max_iterations = self.cfg["pipeline"]["max_iterations"]
+        self.field_top_k = self.cfg["pipeline"].get("field_top_k", 5)
+        self.rag_cfg = self.cfg["rag"]
+        logger.info("Orchestrator 客户端已热重载")
+
     # ──────────────────────────────────────────────────────────────────────
     # RAG 构建（含缓存）
     # ──────────────────────────────────────────────────────────────────────

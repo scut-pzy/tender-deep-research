@@ -54,17 +54,27 @@
     };
   </script>
 
+  <!-- Google Fonts: Inter (Latin) + Noto Sans SC (Chinese) -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Noto+Sans+SC:wght@300;400;500;700&display=swap" rel="stylesheet">
+
   <!-- Lucide Icons (pinned version) -->
   <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.js"></script>
 
   <!-- marked.js for final summary tables -->
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 
+  <!-- highlight.js for code syntax highlighting -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" id="hljs-theme">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+
   <!-- Custom CSS -->
   <link rel="stylesheet" href="/css/main.css">
   <link rel="stylesheet" href="/css/chat.css">
   <link rel="stylesheet" href="/css/sidebar.css">
   <link rel="stylesheet" href="/css/components.css">
+  <link rel="stylesheet" href="/css/settings.css">
 </head>
 <body class="bg-surface-primary dark:text-slate-200 text-slate-800 h-screen overflow-hidden font-sans text-sm leading-relaxed">
 
@@ -78,8 +88,13 @@
       <h1 class="text-base font-semibold bg-gradient-to-r dark:from-white dark:to-slate-400 from-slate-800 to-slate-500 bg-clip-text text-transparent">
         Tender Deep Research
       </h1>
+      <!-- Model status pills -->
+      <div id="model-status-bar" class="hidden md:flex items-center gap-1.5 ml-1">
+        <span class="status-pill" id="pill-policy" title="Policy LLM"></span>
+        <span class="status-pill status-pill-critic" id="pill-critic" title="Critic VLM"></span>
+      </div>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-1">
       <button id="history-toggle" class="p-2 rounded-lg dark:hover:bg-white/5 hover:bg-black/5 text-slate-400 dark:hover:text-white hover:text-slate-700 transition" title="历史记录">
         <i data-lucide="history" class="w-5 h-5"></i>
       </button>
@@ -88,6 +103,10 @@
       </button>
       <button id="sidebar-toggle" class="p-2 rounded-lg dark:hover:bg-white/5 hover:bg-black/5 text-slate-400 dark:hover:text-white hover:text-slate-700 transition" title="切换侧栏">
         <i data-lucide="panel-left" class="w-5 h-5"></i>
+      </button>
+      <div class="w-px h-4 dark:bg-white/10 bg-black/10 mx-1"></div>
+      <button id="settings-toggle" class="p-2 rounded-lg dark:hover:bg-white/5 hover:bg-black/5 text-slate-400 dark:hover:text-white hover:text-slate-700 transition" title="设置">
+        <i data-lucide="settings" class="w-5 h-5"></i>
       </button>
     </div>
   </header>
@@ -176,10 +195,11 @@
               <!-- dynamically populated by upload.js -->
             </div>
           </div>
-          <input type="text" id="user-input" class="flex-1 bg-surface-input border dark:border-white/10 border-black/10 rounded-xl
+          <textarea id="user-input" rows="1"
+                 class="flex-1 bg-surface-input border dark:border-white/10 border-black/10 rounded-xl
                  px-4 py-2.5 text-sm dark:text-slate-200 text-slate-800 dark:placeholder-slate-500 placeholder-slate-400 outline-none
-                 focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition"
-                 placeholder="输入额外字段（逗号分隔）或自由提问...">
+                 focus:border-accent/50 focus:ring-1 focus:ring-accent/20 transition resize-none overflow-hidden"
+                 placeholder="输入额外字段（逗号分隔）或自由提问... (Enter 发送 · Shift+Enter 换行)"></textarea>
           <button id="btn-send" class="p-2.5 rounded-xl bg-accent hover:bg-accent-hover text-white transition
                                        disabled:opacity-40 disabled:cursor-not-allowed shadow-lg shadow-accent/20
                                        hover:shadow-accent/40" title="发送">
@@ -204,6 +224,191 @@
       <div class="text-center text-slate-500 text-xs py-8">加载中...</div>
     </div>
   </div>
+
+  <!-- Settings Panel (right drawer) -->
+  <div id="settings-overlay" class="settings-overlay hidden"></div>
+  <div id="settings-panel" class="settings-panel hidden" role="dialog" aria-label="设置">
+    <!-- Drawer header -->
+    <div class="settings-header">
+      <div class="flex items-center gap-2">
+        <i data-lucide="settings" class="w-4 h-4 text-accent"></i>
+        <span class="font-semibold text-sm">设置</span>
+      </div>
+      <button id="settings-close" class="settings-close-btn" title="关闭">
+        <i data-lucide="x" class="w-4 h-4"></i>
+      </button>
+    </div>
+    <!-- Tabs -->
+    <div class="settings-tabs">
+      <button class="settings-tab active" data-tab="display">
+        <i data-lucide="monitor" class="w-3.5 h-3.5"></i> 显示
+      </button>
+      <button class="settings-tab" data-tab="model">
+        <i data-lucide="cpu" class="w-3.5 h-3.5"></i> 模型
+      </button>
+      <button class="settings-tab" data-tab="pipeline">
+        <i data-lucide="sliders-horizontal" class="w-3.5 h-3.5"></i> 流程
+      </button>
+    </div>
+    <!-- Panes -->
+    <div class="settings-body">
+
+      <!-- ── 显示设置 ── -->
+      <div class="settings-pane active" data-pane="display">
+        <div class="settings-section">
+          <div class="settings-section-title">字体</div>
+          <div class="settings-field">
+            <label>字体系列</label>
+            <select id="set-font-family">
+              <option value="system">系统默认</option>
+              <option value="inter">Inter（现代无衬线）</option>
+              <option value="noto">Noto Sans SC（优化中文）</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label>字体大小 <span id="set-font-size-val" class="settings-val-badge">14px</span></label>
+            <input type="range" id="set-font-size" min="12" max="20" step="1" value="14">
+          </div>
+          <div class="settings-field">
+            <label>行距 <span id="set-line-height-val" class="settings-val-badge">1.65</span></label>
+            <input type="range" id="set-line-height" min="1.3" max="2.2" step="0.05" value="1.65">
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">布局</div>
+          <div class="settings-field">
+            <label>消息密度</label>
+            <div class="density-group" id="set-density">
+              <button class="density-btn" data-val="compact">紧凑</button>
+              <button class="density-btn active" data-val="comfortable">舒适</button>
+              <button class="density-btn" data-val="spacious">宽松</button>
+            </div>
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">主题</div>
+          <div class="settings-field">
+            <label>配色方案</label>
+            <div class="theme-group" id="set-theme">
+              <button class="theme-btn" data-val="dark">
+                <i data-lucide="moon" class="w-3.5 h-3.5"></i> 深色
+              </button>
+              <button class="theme-btn" data-val="light">
+                <i data-lucide="sun" class="w-3.5 h-3.5"></i> 浅色
+              </button>
+            </div>
+          </div>
+        </div>
+        <div class="settings-footer">
+          <button id="set-display-reset" class="btn-settings-secondary">恢复默认</button>
+          <button id="set-display-save" class="btn-settings-primary">应用</button>
+        </div>
+      </div>
+
+      <!-- ── 模型配置 ── -->
+      <div class="settings-pane" data-pane="model">
+        <div class="settings-status-bar" id="model-load-status">正在加载配置...</div>
+        <div class="settings-section">
+          <div class="settings-section-title">Policy LLM（文本提取）</div>
+          <div class="settings-field">
+            <label>API Base URL</label>
+            <input type="text" id="set-policy-base" placeholder="https://api.example.com/v1">
+          </div>
+          <div class="settings-field">
+            <label>API Key</label>
+            <div class="api-key-wrapper">
+              <input type="password" id="set-policy-key" placeholder="sk-...">
+              <button class="key-eye-btn" data-target="set-policy-key" title="显示/隐藏">
+                <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label>模型名称</label>
+            <input type="text" id="set-policy-model" placeholder="qwen-plus">
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">Critic VLM（视觉核验）</div>
+          <div class="settings-field">
+            <label>API Base URL</label>
+            <input type="text" id="set-critic-base" placeholder="https://api.example.com/v1">
+          </div>
+          <div class="settings-field">
+            <label>API Key</label>
+            <div class="api-key-wrapper">
+              <input type="password" id="set-critic-key" placeholder="sk-...">
+              <button class="key-eye-btn" data-target="set-critic-key" title="显示/隐藏">
+                <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label>模型名称</label>
+            <input type="text" id="set-critic-model" placeholder="qwen-vl-max">
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">Embedding（向量化）</div>
+          <div class="settings-field">
+            <label>API Base URL</label>
+            <input type="text" id="set-embed-base" placeholder="https://api.example.com/v1">
+          </div>
+          <div class="settings-field">
+            <label>API Key</label>
+            <div class="api-key-wrapper">
+              <input type="password" id="set-embed-key" placeholder="sk-...">
+              <button class="key-eye-btn" data-target="set-embed-key" title="显示/隐藏">
+                <i data-lucide="eye" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+          <div class="settings-field">
+            <label>模型名称</label>
+            <input type="text" id="set-embed-model" placeholder="text-embedding-v4">
+          </div>
+        </div>
+        <div class="settings-footer">
+          <span class="settings-hint">修改 Key 后将写入服务端 .env</span>
+          <button id="set-model-save" class="btn-settings-primary">保存</button>
+        </div>
+      </div>
+
+      <!-- ── 流程参数 ── -->
+      <div class="settings-pane" data-pane="pipeline">
+        <div class="settings-section">
+          <div class="settings-section-title">RAG 检索</div>
+          <div class="settings-field">
+            <label>检索模式</label>
+            <select id="set-rag-mode">
+              <option value="parent_child">父子分块（推荐）</option>
+              <option value="flat">扁平分块</option>
+            </select>
+          </div>
+          <div class="settings-field">
+            <label>Top-K <span id="set-topk-val" class="settings-val-badge">5</span></label>
+            <input type="range" id="set-topk" min="2" max="15" step="1" value="5">
+          </div>
+        </div>
+        <div class="settings-section">
+          <div class="settings-section-title">提取流程</div>
+          <div class="settings-field">
+            <label>最大迭代轮数 <span id="set-maxiter-val" class="settings-val-badge">3</span></label>
+            <input type="range" id="set-maxiter" min="1" max="5" step="1" value="3">
+          </div>
+          <div class="settings-field">
+            <label>单字段 Top-K <span id="set-fieldtopk-val" class="settings-val-badge">5</span></label>
+            <input type="range" id="set-fieldtopk" min="2" max="15" step="1" value="5">
+          </div>
+        </div>
+        <div class="settings-footer">
+          <span class="settings-hint">修改后下次分析生效</span>
+          <button id="set-pipeline-save" class="btn-settings-primary">保存</button>
+        </div>
+      </div>
+
+    </div><!-- /settings-body -->
+  </div><!-- /settings-panel -->
 
   <script type="module" src="/js/app.js"></script>
   <script>

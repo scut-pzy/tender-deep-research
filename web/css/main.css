@@ -9,6 +9,16 @@
   --header-height: 52px;
   --radius: 8px;
   --radius-lg: 12px;
+
+  /* ── 显示设置（由 settings.js 动态修改）──────────────────────────────── */
+  --font-size-base: 14px;
+  --font-family-base: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --line-height-base: 1.65;
+
+  /* 消息密度（comfortable 默认） */
+  --msg-gap: 1rem;          /* messages 容器 gap */
+  --msg-padding-y: 1rem;    /* 气泡纵向内边距 */
+  --msg-padding-x: 1.25rem; /* 气泡横向内边距 */
 }
 
 /* Dark theme (default) */
@@ -37,8 +47,27 @@ html:not(.dark) {
   --border: rgba(0,0,0,0.08);
 }
 
+/* ── 密度预设 ─────────────────────────────────────────────────────────── */
+body[data-density="compact"] {
+  --msg-gap: 0.5rem;
+  --msg-padding-y: 0.65rem;
+  --msg-padding-x: 0.9rem;
+  --font-size-base: calc(var(--font-size-base, 14px) - 1px);
+}
+body[data-density="spacious"] {
+  --msg-gap: 1.5rem;
+  --msg-padding-y: 1.4rem;
+  --msg-padding-x: 1.6rem;
+}
+
 /* ── Minimal reset (Tailwind preflight handles most) ─────────────────── */
 *, *::before, *::after { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-family-base);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-base);
+}
 
 code, pre {
   font-family: 'JetBrains Mono', 'Fira Code', monospace;

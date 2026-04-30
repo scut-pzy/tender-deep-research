@@ -1,10 +1,28 @@
 /**
- * chat.js — Message rendering with live table + copy button + marked.js
+ * chat.js — Message rendering with live table + copy button + marked.js + code highlighting
  */
 
 const messagesEl = document.getElementById('messages');
 
 marked.setOptions({ breaks: true, gfm: true });
+
+// ── 时间戳 ──────────────────────────────────────────────────────────────────
+function formatTime(d = new Date()) {
+  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+}
+
+function appendTimestamp(parent) {
+  const ts = document.createElement('div');
+  ts.className = 'msg-timestamp';
+  ts.textContent = formatTime();
+  parent.appendChild(ts);
+}
+
+// ── 代码高亮（highlight.js）─────────────────────────────────────────────────
+function highlightCodeBlocks(el) {
+  if (typeof hljs === 'undefined') return;
+  el.querySelectorAll('pre code').forEach(block => hljs.highlightElement(block));
+}
 
 function removeWelcome() {
   const w = messagesEl.querySelector('.welcome-message');
@@ -37,6 +55,7 @@ export function addUserMessage(filename, fields) {
     html += '</div>';
   }
   div.innerHTML = html;
+  appendTimestamp(div);
   messagesEl.appendChild(div);
   scrollToBottom();
 }
@@ -286,6 +305,7 @@ export function createAiMessage() {
       summaryAccum += text;
       const area = getSummaryArea();
       area.innerHTML = marked.parse(summaryAccum);
+      highlightCodeBlocks(area);
       scrollToBottom();
     },
 
@@ -296,6 +316,7 @@ export function createAiMessage() {
       if (!statusArea && !tableWrapper && !summaryArea) {
         div.innerHTML = '<span class="text-slate-500">(无内容)</span>';
       }
+      appendTimestamp(div);
       // Make value cells editable
       if (tableBody) {
         for (const [key, tr] of fieldRows) {
@@ -725,6 +746,7 @@ export function createChatAiMessage() {
       accum += text;
       const area = getContentArea();
       area.innerHTML = marked.parse(accum);
+      highlightCodeBlocks(area);
       scrollToBottom();
     },
 
@@ -742,6 +764,7 @@ export function createChatAiMessage() {
       if (!contentArea) {
         div.innerHTML = '<span class="text-slate-500">(无内容)</span>';
       }
+      appendTimestamp(div);
       scrollToBottom();
     },
   };

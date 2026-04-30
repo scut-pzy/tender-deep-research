@@ -26,11 +26,14 @@ import {
 } from './upload.js';
 import { initTheme, setupThemeToggle } from './theme.js';
 import { setupHistory } from './history.js';
+import { initSettings, loadDisplaySettings } from './settings.js';
 
-// Initialize theme before paint
+// Apply saved display settings before paint (font/density/theme)
+loadDisplaySettings();
 initTheme();
 setupThemeToggle();
 setupHistory();
+initSettings();
 
 const userInput = document.getElementById('user-input');
 const btnSend = document.getElementById('btn-send');
@@ -184,6 +187,15 @@ btnSend.addEventListener('click', () => {
     handleSend();
   }
 });
+
+// textarea 自动撑高
+function autoResizeInput() {
+  userInput.style.height = 'auto';
+  userInput.style.height = Math.min(userInput.scrollHeight, 160) + 'px';
+}
+userInput.addEventListener('input', autoResizeInput);
+
+// Enter 发送 / Shift+Enter 换行
 userInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
@@ -235,6 +247,7 @@ async function handleSend() {
   // Show user message
   addUserMessage(fileName, fields);
   userInput.value = '';
+  autoResizeInput();
   clearExtractionCache();
 
   // Prepare AI message and sidebar
